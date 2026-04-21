@@ -55,4 +55,14 @@ lazy val root = (project in file("."))
     // ── SemanticDB for Scalafix ───────────────────────────────────────────────
     semanticdbEnabled := true,
     semanticdbVersion := scalafixSemanticdb.revision,
+
+    // ── Assembly (fat JAR for Docker) ─────────────────────────────────────────
+    assembly / assemblyJarName := "app.jar",
+    assembly / test            := {},
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.concat
+      case PathList("META-INF", _*)                  => MergeStrategy.discard
+      case "reference.conf"                          => MergeStrategy.concat
+      case _                                         => MergeStrategy.first
+    },
   )
