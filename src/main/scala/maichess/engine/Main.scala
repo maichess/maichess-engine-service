@@ -44,8 +44,8 @@ object Main extends ZIOAppDefault:
   private final class BotsAdapter(svc: BotsServiceImpl, runtime: Runtime[Any])
       extends BotsGrpc.Bots:
 
-    private def run[A](zio: zio.IO[Throwable, A]): Future[A] =
-      Unsafe.unsafe { implicit u => runtime.unsafe.runToFuture(zio) }
+    private def run[A](effect: zio.IO[Throwable, A]): Future[A] =
+      Unsafe.unsafe { implicit u => runtime.unsafe.runToFuture(effect) }
 
     def getBestMove(request: GetBestMoveRequest): Future[GetBestMoveResponse] =
       run(svc.getBestMove(request).mapError(_.asException()))

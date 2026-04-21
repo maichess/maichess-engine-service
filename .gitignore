@@ -53,3 +53,4 @@ project/project/
 
 ### Environment ###
 .env
+/.jvmopts
