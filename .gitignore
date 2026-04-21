@@ -46,3 +46,10 @@ build/
 
 ### Scala ###
 .bsp/
+.metals/
+.bloop/
+project/target/
+project/project/
+
+### Environment ###
+.env
