@@ -1,11 +1,14 @@
 package maichess.engine
 
 import io.grpc.{Server, ServerBuilder}
+import io.grpc.stub.StreamObserver
 import scala.concurrent.Future
 import zio.{Runtime, Unsafe, ZIO, ZIOAppDefault}
 import maichess.engine.grpc.BotsServiceImpl
 import maichess.engine.service.EngineServiceLive
 import maichess.engine.v1.bots.bots.{
+  AnalysisUpdate    => ProtoAnalysisUpdate,
+  AnalyzePositionRequest,
   BotsGrpc,
   GetBestMoveRequest,
   GetBestMoveResponse,
@@ -52,3 +55,16 @@ object Main extends ZIOAppDefault:
 
     def listBots(request: ListBotsRequest): Future[ListBotsResponse] =
       run(svc.listBots(request))
+
+    def analyzePosition(request: AnalyzePositionRequest, observer: StreamObserver[ProtoAnalysisUpdate]): Unit =
+      Unsafe.unsafe { implicit u =>
+        runtime.unsafe.fork(
+          svc.analyzePosition(request)
+            .mapError(_.asException())
+            .tap(update => ZIO.attempt(observer.onNext(update)).orDie)
+            .runDrain
+            .ensuring(ZIO.attempt(observer.onCompleted()).orDie)
+            .catchAll(err => ZIO.attempt(observer.onError(err)).orDie)
+        )
+      }
+      ()

@@ -25,6 +25,14 @@ final class Search:
   private var rootBest  = Move.None
   private var rootScore = 0
   private var nodes     = 0
+  private var excluded  = Array.empty[Int]
+
+  private inline def isExcluded(mv: Int): Boolean =
+    var i = 0; var found = false
+    while i < excluded.length && !found do
+      if excluded(i) == mv then found = true
+      i += 1
+    found
 
   def bestMove(pos: Position, timeLimitMs: Long): (Int, Int) =
     deadline  = System.currentTimeMillis() + timeLimitMs
@@ -72,7 +80,7 @@ final class Search:
     var i = 0
     while i < cnt do
       val mv = pick(moveBuf(ply), mscores(ply), cnt, i)
-      if LegalCheck.isLegal(pos, mv) then
+      if !(ply == 0 && isExcluded(mv)) && LegalCheck.isLegal(pos, mv) then
         legal += 1
         pos.makeMove(mv)
         val sc = -negamax(pos, depth - 1, -beta, -alpha, ply + 1)
@@ -111,6 +119,55 @@ final class Search:
         if sc > alpha then alpha = sc
       i += 1
     alpha
+
+  // Fixed-depth search with no time limit. Skips `excl` moves at the root (for multi-PV).
+  def bestMoveAtDepth(pos: Position, targetDepth: Int, excl: Array[Int]): (Int, Int) =
+    excluded  = excl
+    deadline  = Long.MaxValue
+    nodes     = 0
+    rootScore = 0
+    val initCnt = MoveGen.generate(pos, moveBuf(0))
+    rootBest = Move.None
+    var i = 0
+    while i < initCnt && rootBest == Move.None do
+      if !isExcluded(moveBuf(0)(i)) && LegalCheck.isLegal(pos, moveBuf(0)(i)) then
+        rootBest = moveBuf(0)(i)
+      i += 1
+    var depth = 1
+    while depth <= targetDepth do
+      negamax(pos, depth, -INF, INF, 0)
+      depth += 1
+    (rootBest, rootScore)
+
+  // Walks the transposition-table chain from `pos` to reconstruct the principal variation.
+  // Makes and unmakes moves on `pos` — the position is fully restored on return.
+  def extractPv(pos: Position, maxLength: Int): List[Int] =
+    val buf     = new Array[Int](maxLength)
+    val hashes  = new Array[Long](maxLength)
+    var len     = 0
+    var cont    = true
+    while cont && len < maxLength do
+      val idx  = (pos.hash & TT_MASK).toInt
+      val tdat = ttData(idx)
+      if ttKeys(idx) != (pos.hash ^ tdat) then cont = false
+      else
+        val mv = (tdat & 0xFFFF).toInt
+        var cycle = false
+        var j = 0
+        while j < len && !cycle do
+          if hashes(j) == pos.hash then cycle = true
+          j += 1
+        if mv == Move.None || cycle || !LegalCheck.isLegal(pos, mv) then cont = false
+        else
+          hashes(len) = pos.hash
+          buf(len)    = mv
+          len        += 1
+          pos.makeMove(mv)
+    var k = len - 1
+    while k >= 0 do
+      pos.unmakeMove(buf(k))
+      k -= 1
+    buf.take(len).toList
 
   private def scoreM(pos: Position, mvs: Array[Int], sc: Array[Int], cnt: Int, ttMv: Int): Unit =
     var i = 0
