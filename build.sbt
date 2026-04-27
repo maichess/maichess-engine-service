@@ -5,6 +5,8 @@ val zioVersion     = "2.1.25"
 val zioGrpcVersion = "0.6.3"
 val grpcVersion    = "1.80.0"
 val scalapbVersion = "0.11.17"
+val otelVersion    = "1.49.0"
+val otelInstrVersion = "2.16.0-alpha"
 
 lazy val root = (project in file("."))
   .settings(
@@ -23,14 +25,17 @@ lazy val root = (project in file("."))
 
     // ── Dependencies ──────────────────────────────────────────────────────────
     libraryDependencies ++= Seq(
-      "io.github.maichess"            %% "platform-protos"      % "0.2.9",
-      "dev.zio"                       %% "zio"                  % zioVersion,
-      "dev.zio"                       %% "zio-streams"          % zioVersion,
-      "io.grpc"                        % "grpc-netty-shaded"    % grpcVersion,
-      "com.thesamet.scalapb"          %% "scalapb-runtime-grpc" % scalapbVersion,
-      "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"        % zioGrpcVersion,
-      "dev.zio"                       %% "zio-test"             % zioVersion % Test,
-      "dev.zio"                       %% "zio-test-sbt"         % zioVersion % Test,
+      "io.github.maichess"            %% "platform-protos"                    % "0.2.9",
+      "dev.zio"                       %% "zio"                                % zioVersion,
+      "dev.zio"                       %% "zio-streams"                        % zioVersion,
+      "io.grpc"                        % "grpc-netty-shaded"                  % grpcVersion,
+      "com.thesamet.scalapb"          %% "scalapb-runtime-grpc"               % scalapbVersion,
+      "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"                      % zioGrpcVersion,
+      "io.opentelemetry"               % "opentelemetry-sdk"                  % otelVersion,
+      "io.opentelemetry"               % "opentelemetry-exporter-otlp"        % otelVersion,
+      "io.opentelemetry.instrumentation" % "opentelemetry-grpc-1.6"           % otelInstrVersion,
+      "dev.zio"                       %% "zio-test"                           % zioVersion % Test,
+      "dev.zio"                       %% "zio-test-sbt"                       % zioVersion % Test,
     ),
 
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
@@ -61,7 +66,9 @@ lazy val root = (project in file("."))
     assembly / test            := {},
     assembly / assemblyMergeStrategy := {
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.concat
+      case PathList("META-INF", "native-image", xs @ _*) => MergeStrategy.discard
       case PathList("META-INF", _*)                  => MergeStrategy.discard
+      case PathList("module-info.class")             => MergeStrategy.discard
       case "reference.conf"                          => MergeStrategy.concat
       case _                                         => MergeStrategy.first
     },
