@@ -37,7 +37,7 @@ final class BotsServiceImpl(engine: EngineService):
       .mapError(reason => Status.INVALID_ARGUMENT.withDescription(reason))
 
   private def toProtoBot(config: BotConfig): ProtoBot =
-    ProtoBot(id = config.id, name = config.name, elo = config.elo)
+    ProtoBot(id = config.id, name = config.name, elo = config.elo, description = config.description)
 
 object BotsServiceImpl:
   val layer: URLayer[EngineService, BotsServiceImpl] =

@@ -32,6 +32,9 @@ object BotRegistrySpec extends ZIOSpecDefault:
         val aggs = BotRegistry.all.filter(_.id.endsWith("_aggressive"))
         assertTrue(aggs.length == 3 && aggs.forall(_.strategy.isInstanceOf[TimingStrategy.Aggressive]))
       },
+      test("all bots have a non-empty description") {
+        assertTrue(BotRegistry.all.forall(_.description.nonEmpty))
+      },
     ),
 
     suite("find")(
@@ -50,39 +53,42 @@ object BotRegistrySpec extends ZIOSpecDefault:
       test("classical has elo 2000") {
         assertTrue(BotRegistry.find("classical").exists(_.elo == 2000))
       },
+      test("every known bot has a non-empty description") {
+        assertTrue(expectedIds.forall(id => BotRegistry.find(id).exists(_.description.nonEmpty)))
+      },
     ),
 
     suite("BotConfig")(
       test("Fixed strategy: computeMoveTime ignores remaining time") {
-        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Fixed(500L))
+        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Fixed(500L), description = "")
         assertTrue(cfg.computeMoveTime(Some(100000L)) == 500L)
       },
       test("Fixed strategy: computeMoveTime falls back to moveTimeMs when no clock") {
-        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Fixed(500L))
+        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Fixed(500L), description = "")
         assertTrue(cfg.computeMoveTime(None) == 500L)
       },
       test("Proportional strategy: computes remaining / divisor") {
-        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Proportional(divisor = 30, minMs = 100L, fallbackMs = 1000L))
+        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Proportional(divisor = 30, minMs = 100L, fallbackMs = 1000L), description = "")
         assertTrue(cfg.computeMoveTime(Some(30000L)) == 1000L)
       },
       test("Proportional strategy: respects minimum") {
-        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Proportional(divisor = 30, minMs = 200L, fallbackMs = 1000L))
+        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Proportional(divisor = 30, minMs = 200L, fallbackMs = 1000L), description = "")
         assertTrue(cfg.computeMoveTime(Some(100L)) == 200L)
       },
       test("Proportional strategy: falls back when no clock") {
-        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Proportional(divisor = 30, minMs = 100L, fallbackMs = 1000L))
+        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Proportional(divisor = 30, minMs = 100L, fallbackMs = 1000L), description = "")
         assertTrue(cfg.computeMoveTime(None) == 1000L)
       },
       test("Aggressive strategy: computes fraction of remaining") {
-        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Aggressive(fraction = 0.1, minMs = 50L, fallbackMs = 500L))
+        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Aggressive(fraction = 0.1, minMs = 50L, fallbackMs = 500L), description = "")
         assertTrue(cfg.computeMoveTime(Some(10000L)) == 1000L)
       },
       test("Aggressive strategy: respects minimum") {
-        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Aggressive(fraction = 0.1, minMs = 200L, fallbackMs = 500L))
+        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Aggressive(fraction = 0.1, minMs = 200L, fallbackMs = 500L), description = "")
         assertTrue(cfg.computeMoveTime(Some(100L)) == 200L)
       },
       test("Aggressive strategy: falls back when no clock") {
-        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Aggressive(fraction = 0.1, minMs = 50L, fallbackMs = 500L))
+        val cfg = BotConfig(id = "x", name = "X", elo = 1000, strategy = TimingStrategy.Aggressive(fraction = 0.1, minMs = 50L, fallbackMs = 500L), description = "")
         assertTrue(cfg.computeMoveTime(None) == 500L)
       },
     ),

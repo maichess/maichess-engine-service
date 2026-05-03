@@ -20,9 +20,14 @@ object BotsServiceSpec extends ZIOSpecDefault:
         for resp <- svc.listBots(ListBotsRequest())
         yield
           assertTrue(resp.bots.length == 9) &&
-          assertTrue(resp.bots.head.id   == "bullet") &&
-          assertTrue(resp.bots.head.name == "Bullet") &&
-          assertTrue(resp.bots.head.elo  == 1400)
+          assertTrue(resp.bots.head.id          == "bullet") &&
+          assertTrue(resp.bots.head.name        == "Bullet") &&
+          assertTrue(resp.bots.head.elo         == 1400) &&
+          assertTrue(resp.bots.head.description.nonEmpty)
+      },
+      test("all returned bots have a non-empty description") {
+        for resp <- svc.listBots(ListBotsRequest())
+        yield assertTrue(resp.bots.forall(_.description.nonEmpty))
       },
     ),
 
