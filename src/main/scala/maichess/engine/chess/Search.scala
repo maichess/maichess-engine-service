@@ -34,8 +34,15 @@ final class Search:
       i += 1
     found
 
+  // Minimum number of iterative-deepening iterations to run before the clock is
+  // consulted. A 2-ply search (plus quiescence) is cheap and bounded, and it
+  // guarantees we never return an unsearched fallback move or miss a one-move
+  // tactic (mate-in-one, hanging piece) when the time budget is tight or the
+  // first invocation pays JVM warm-up / table-init cost.
+  private val MinDepth = 2
+
   def bestMove(pos: Position, timeLimitMs: Long): (Int, Int) =
-    deadline  = System.currentTimeMillis() + timeLimitMs
+    val start = System.currentTimeMillis()
     nodes     = 0
     rootScore = 0
     val initCnt = MoveGen.generate(pos, moveBuf(0))
@@ -44,7 +51,12 @@ final class Search:
     while i < initCnt && rootBest == Move.None do
       if LegalCheck.isLegal(pos, moveBuf(0)(i)) then rootBest = moveBuf(0)(i)
       i += 1
+    deadline = Long.MaxValue
     var depth = 1
+    while depth <= MinDepth do
+      negamax(pos, depth, -INF, INF, 0)
+      depth += 1
+    deadline = start + timeLimitMs
     while depth < 64 && !timeUp() do
       negamax(pos, depth, -INF, INF, 0)
       depth += 1

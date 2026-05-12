@@ -97,6 +97,23 @@ Partially.
 2. Does the test run on a slow / shared CI box? Roughly how long does `Magics.init()` take on a cold JVM on the failing machine? (A quick `System.nanoTime()` around the `locally { init() }` would settle the timing theory.)
 3. Are we permitted to change the test to a deterministic form (`bestMoveAtDepth`), or must the fix be entirely on the engine side?
 
+## RESOLUTION (2026-05-12)
+
+Maintainer confirmed the failure is **consistent** and the host is fast — which rules out an intermittent GC/scheduling fluke and confirms the structural diagnosis: with the `"bullet"` bot's flat **100 ms** budget, `Search.bestMove`'s iterative-deepening loop consistently fails to complete even one iteration before `timeUp()` trips, because the budget is started (`deadline = now + timeLimitMs`, `Search.scala:38`) *before* the first call into the chess engine (line 41 `MoveGen.generate` is the first reference to `Magics`, which triggers its `locally { init() }` magic-bitboard table generation — slow when run interpreted on a cold JVM — plus first-time class loading and cold-JIT execution of `negamax`/`quiesce`/`Eval`). When that cold-start cost reaches ~100 ms, the loop body never runs (or depth-1's `quiesce` returns `0` for every child via its own `timeUp()` guard), so `bestMove` returns its **fallback** — the first pseudo-legal move that passes `isLegal`, which in `mateIn1Fen` is the `e5→e4` pawn push — with score `0`. The other Base-bot tests don't catch it because they only assert move *length* or assert a *failure*; `"finds the mate-in-one"` is the only one that requires the search to actually run ≥ 2 plies.
+
+The engine logic itself (FEN parse, generation of `Qd8-h4`, `isLegal`, mate detection via `isAttacked`/`Magics.bishopAttacks(e1,…)` correctly seeing the h4 queen, negamax `-(MATE-ply)` scoring) was traced and is correct — once the search runs even depth 1–2 it finds `d8h4`. So this is an **engine deficiency, not a bad test**, and per `CLAUDE.md` ("only change tests when the requirement they cover changes") the test was left as-is.
+
+### Fix applied — `chess/Search.scala`, `bestMove`
+
+Always complete the first `MinDepth` (= 2) iterative-deepening iterations with the time check disabled (`deadline = Long.MaxValue`), *then* set the real deadline (`start + timeLimitMs`, where `start` is captured at entry so the budget still accounts for time already spent) and continue iterative deepening for depths 3+. A 2-ply search plus quiescence is cheap and bounded, so the bot never overshoots meaningfully, and it can no longer return an unsearched fallback move or miss a one-move tactic on a tight budget or a cold JVM. As a side effect this also neutralises the cold-`Magics` interaction, since `Magics.<clinit>` (if it lands inside `negamax(pos, 1, …)`) no longer races a live deadline.
+
+Behaviour of the other tests is unchanged: the `noKingFen` case still throws inside `MoveGen.generate` → "Search failed"; the `mateFen` case still leaves `rootBest == Move.None` → "No legal moves"; `analyzePosition` uses `bestMoveAtDepth` (untouched).
+
+### Follow-ups not done here (out of scope, flagged for the maintainer)
+
+- `Search.scala:90` — `if ply == 0 then rootBest = mv; rootScore = sc` parses as two statements, so `rootScore = sc` runs at every ply inside the `sc > best` block; this can leave the *returned score* stale when a later root move doesn't improve `best` (the returned *move* is unaffected). Separate, pre-existing bug.
+- Consider eagerly forcing `Magics` / `Attacks` initialisation at service start-up so the one-time cost is never inside any search at all.
+
 ## Status / progress log
 
-- 2026-05-12: Traced the FEN, move generation, mate detection, and negamax mate-scoring for `mateIn1Fen` — engine logic appears correct for this position. Identified the timed-search/cold-`Magics` interaction as the most likely root cause of the `e5e4` fallback. Wrote up theory + candidate fixes. No code changed yet; awaiting maintainer input on the open questions and on whether the test may be made deterministic.
+- 2026-05-12: Traced FEN / move-gen / mate-detection / negamax mate-scoring for `mateIn1Fen` — engine logic correct. Identified that `Search.bestMove` returns its first-legal-move fallback (`e5e4`, score 0) whenever the 100 ms budget is exhausted before the iterative-deepening loop runs (cold-JVM / `Magics.init()` cost counted inside the budget). Maintainer confirmed consistent failure on a fast host. Fixed `Search.bestMove` to always complete `MinDepth`=2 iterations before consulting the clock. Test should now pass deterministically; logic-only change in the coverage-excluded `chess` package.
