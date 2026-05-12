@@ -109,10 +109,10 @@ Always complete the first `MinDepth` (= 2) iterative-deepening iterations with t
 
 Behaviour of the other tests is unchanged: the `noKingFen` case still throws inside `MoveGen.generate` → "Search failed"; the `mateFen` case still leaves `rootBest == Move.None` → "No legal moves"; `analyzePosition` uses `bestMoveAtDepth` (untouched).
 
-### Follow-ups not done here (out of scope, flagged for the maintainer)
+### Follow-ups (also fixed, 2026-05-12)
 
-- `Search.scala:90` — `if ply == 0 then rootBest = mv; rootScore = sc` parses as two statements, so `rootScore = sc` runs at every ply inside the `sc > best` block; this can leave the *returned score* stale when a later root move doesn't improve `best` (the returned *move* is unaffected). Separate, pre-existing bug.
-- Consider eagerly forcing `Magics` / `Attacks` initialisation at service start-up so the one-time cost is never inside any search at all.
+- **`Search.scala` `negamax` root-score bug** — `if ply == 0 then rootBest = mv; rootScore = sc` parsed as two statements (`(if ply == 0 then rootBest = mv); rootScore = sc`), so `rootScore = sc` ran at *every* ply inside the `sc > best` block, leaving the *returned score* stale whenever a later root move failed to improve `best` (the returned *move* was unaffected, which is why the mate-in-one test never surfaced it). Fixed by braces: `if ply == 0 then { rootBest = mv; rootScore = sc }`.
+- **Eager engine warm-up at service start-up** — added `Main.warmUpEngine()` (called at the head of `run`, before the gRPC server starts) which parses the start position and runs a short `Search.bestMove`, forcing magic-bitboard / attack-table generation and JIT warm-up of the search hot path so the first real `GetBestMove` request never pays that cost mid-request. (`Main` is coverage-excluded; the change is production-only and does not affect tests.)
 
 ## Status / progress log
 

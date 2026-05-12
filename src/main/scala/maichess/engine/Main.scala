@@ -14,6 +14,7 @@ import io.opentelemetry.sdk.trace.`export`.BatchSpanProcessor
 import io.opentelemetry.semconv.ServiceAttributes
 import scala.concurrent.Future
 import zio.{Runtime, Unsafe, ZIO, ZIOAppDefault}
+import maichess.engine.chess.{Position, Search}
 import maichess.engine.grpc.BotsServiceImpl
 import maichess.engine.service.EngineServiceLive
 import maichess.engine.v1.bots.bots.{
@@ -35,6 +36,13 @@ object Main extends ZIOAppDefault:
   private val otlpEndpoint: String =
     sys.env.getOrElse("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
 
+  // Force one-time engine initialisation (magic-bitboard / attack-table generation)
+  // and JIT warm-up of the search hot path before the server accepts traffic, so
+  // the first GetBestMove request doesn't pay that cost mid-request.
+  private def warmUpEngine(): Unit =
+    Position.fromFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+      .foreach(pos => new Search().bestMove(pos, 50L))
+
   private def buildTracerProvider(): SdkTracerProvider =
     val resource = Resource.getDefault().merge(
       Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, "engine-service")))
@@ -52,6 +60,7 @@ object Main extends ZIOAppDefault:
     GrpcTelemetry.create(otel)
 
   def run =
+    ZIO.attempt(warmUpEngine()).orDie *>
     ZIO.acquireReleaseWith(
       ZIO.attempt(buildTracerProvider())
     )(tp => ZIO.attempt(tp.close()).orDie) { tracerProvider =>

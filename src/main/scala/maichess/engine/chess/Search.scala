@@ -99,7 +99,7 @@ final class Search:
         pos.unmakeMove(mv)
         if sc > best then
           best = sc; bestMv = mv
-          if ply == 0 then rootBest = mv; rootScore = sc
+          if ply == 0 then { rootBest = mv; rootScore = sc }
         if sc > alpha then alpha = sc
         if alpha >= beta then
           storeT(idx, pos.hash, mv, sc, depth, LOWER)
