@@ -16,10 +16,10 @@ object BotsServiceSpec extends ZIOSpecDefault:
   def spec = suite("BotsServiceImpl")(
 
     suite("listBots")(
-      test("returns all nine bots as proto messages") {
+      test("returns all eighteen bots as proto messages") {
         for resp <- svc.listBots(ListBotsRequest())
         yield
-          assertTrue(resp.bots.length == 9) &&
+          assertTrue(resp.bots.length == 18) &&
           assertTrue(resp.bots.head.id          == "bullet") &&
           assertTrue(resp.bots.head.name        == "Bullet") &&
           assertTrue(resp.bots.head.elo         == 1400) &&
@@ -81,4 +81,8 @@ object BotsServiceSpec extends ZIOSpecDefault:
         yield assertTrue(status.getCode == Status.Code.INVALID_ARGUMENT)
       },
     ),
+
+    test("BotsServiceImpl.layer can be constructed") {
+      assertTrue(BotsServiceImpl.layer != null)
+    },
   )

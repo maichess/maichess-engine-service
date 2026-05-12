@@ -40,5 +40,7 @@ final class BotsServiceImpl(engine: EngineService):
     ProtoBot(id = config.id, name = config.name, elo = config.elo, description = config.description)
 
 object BotsServiceImpl:
+  // $COVERAGE-OFF$ ZLayer wiring — only used in Main, not in unit tests
   val layer: URLayer[EngineService, BotsServiceImpl] =
     ZLayer.fromFunction(new BotsServiceImpl(_))
+  // $COVERAGE-ON$

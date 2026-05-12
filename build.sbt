@@ -55,7 +55,8 @@ lazy val root = (project in file("."))
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum    := true,
     coverageExcludedFiles    := ".*Main.*",
-    coverageExcludedPackages := "maichess\\.engine\\.chess\\..*",
+    // chess/ is excluded (timing-dependent branches) but chess/basic/ is NOT — it has 100% coverage.
+    coverageExcludedPackages := "maichess\\.engine\\.chess\\.(?!basic\\.).*",
 
     // ── SemanticDB for Scalafix ───────────────────────────────────────────────
     semanticdbEnabled := true,

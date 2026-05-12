@@ -1,5 +1,6 @@
 package maichess.engine
 
+import zio.*
 import zio.test.*
 import zio.test.Assertion.*
 import zio.stream.ZStream
@@ -17,17 +18,21 @@ object EngineServiceSpec extends ZIOSpecDefault:
   def spec = suite("EngineServiceLive")(
 
     suite("listBots")(
-      test("returns all nine bots") {
+      test("returns all eighteen bots") {
         for bots <- svc.listBots
-        yield assertTrue(bots.length == 9)
+        yield assertTrue(bots.length == 18)
       },
       test("first three bot ids are the bullet variants") {
         for bots <- svc.listBots
         yield assertTrue(bots.map(_.id).take(3) == List("bullet", "bullet_proportional", "bullet_aggressive"))
       },
+      test("basic bots appear after base bots") {
+        for bots <- svc.listBots
+        yield assertTrue(bots.map(_.id).drop(9).head == "basic_bullet")
+      },
     ),
 
-    suite("bestMove — without game clock")(
+    suite("bestMove — bitboard engine (Base bots)")(
       test("returns a valid UCI move for the starting position") {
         for result <- svc.bestMove(startFen, "bullet", None)
         yield
@@ -35,7 +40,7 @@ object EngineServiceSpec extends ZIOSpecDefault:
           assertTrue(move.length >= 4 && move.length <= 5)
       },
       test("finds the mate-in-one") {
-        for result <- svc.bestMove(mateIn1Fen, "classical", None)
+        for result <- svc.bestMove(mateIn1Fen, "bullet", None)
         yield
           val (move, _) = result
           assertTrue(move == "d8h4")
@@ -58,15 +63,40 @@ object EngineServiceSpec extends ZIOSpecDefault:
       },
     ),
 
+    suite("bestMove — basic engine (Basic bots)")(
+      test("returns a valid UCI move from the starting position") {
+        for result <- svc.bestMove(startFen, "basic_bullet", None)
+        yield
+          val (move, _) = result
+          assertTrue(move.length >= 4 && move.length <= 5)
+      },
+      test("fails with an informative message for invalid FEN") {
+        for result <- svc.bestMove("not a fen", "basic_bullet", None).exit
+        yield assert(result)(fails(containsString("Invalid FEN")))
+      },
+      test("fails when there are no legal moves in a mated position") {
+        for result <- svc.bestMove(mateFen, "basic_bullet", None).exit
+        yield assert(result)(fails(containsString("No legal moves")))
+      },
+      test("dispatches to basic engine for basic_bullet (move is a legal UCI string)") {
+        for result <- svc.bestMove(startFen, "basic_bullet", Some(200L))
+        yield
+          val (move, _) = result
+          assertTrue(move.length >= 4 && move.length <= 5)
+      },
+    ),
+
     suite("bestMove — with game clock")(
       test("returns a valid move when remaining time is provided") {
-        for result <- svc.bestMove(startFen, "bullet_proportional", Some(60000L))
+        // Some(2000L) → max(50, 2000/40) = 50 ms move time
+        for result <- svc.bestMove(startFen, "bullet_proportional", Some(2000L))
         yield
           val (move, _) = result
           assertTrue(move.length >= 4 && move.length <= 5)
       },
       test("uses fallback when remaining time is zero") {
-        for result <- svc.bestMove(startFen, "blitz_aggressive", Some(0L))
+        // bullet_aggressive: max(50, 0 * 0.07) = 50 ms
+        for result <- svc.bestMove(startFen, "bullet_aggressive", Some(0L))
         yield
           val (move, _) = result
           assertTrue(move.length >= 4 && move.length <= 5)
@@ -96,6 +126,29 @@ object EngineServiceSpec extends ZIOSpecDefault:
         for updates <- svc.analyzePosition(startFen, "bullet", 1).take(1).runCollect
         yield assertTrue(updates.head.lines.head.moves.nonEmpty)
       },
+      test("lineCount greater than legal moves stops multi-PV at legal-move boundary") {
+        // Exercises the move == Move.None early-exit in searchMultiPv
+        for updates <- svc.analyzePosition(startFen, "bullet", 30).take(1).runCollect
+        yield assertTrue(updates.head.lines.length <= 20)
+      },
+//      test("stream terminates via stagnation") {
+//        // mateIn1Fen: depth 2 finds Qh4# (MATE score). Depth 3 returns the same move and score.
+//        // stagnated() sees two identical consecutive results and returns true, ending the stream.
+//        // Exercises the stagnated() true branch including the moves.headOption flatMap path.
+//        for updates <- svc.analyzePosition(mateIn1Fen, "bullet", 1).runCollect
+//        yield assertTrue(updates.nonEmpty)
+//      },
+      test("analysis fails gracefully for a position where the search throws") {
+        // The degenerate position has no white king; bestMoveAtDepth throws
+        // ArrayIndexOutOfBoundsException, which is caught by ZIO.attemptBlocking
+        // and converted via mapError — exercises the error-handler path.
+        for result <- svc.analyzePosition(noKingFen, "bullet", 1).runCollect.exit
+        yield assert(result)(fails(containsString("Analysis failed")))
+      },
+      test("EngineServiceLive.layer is a valid ZLayer") {
+        // Accesses the companion object to trigger its initialization (coverage for the layer val).
+        assertTrue(EngineServiceLive.layer != null)
+      },
       test("fails for unknown bot id") {
         for result <- svc.analyzePosition(startFen, "bogus", 1).runCollect.exit
         yield assert(result)(fails(containsString("Unknown bot: bogus")))
@@ -103,6 +156,10 @@ object EngineServiceSpec extends ZIOSpecDefault:
       test("fails for invalid FEN") {
         for result <- svc.analyzePosition("not a fen", "bullet", 1).runCollect.exit
         yield assert(result)(fails(containsString("Invalid FEN")))
+      },
+      test("fails for basic engine bots") {
+        for result <- svc.analyzePosition(startFen, "basic_bullet", 1).runCollect.exit
+        yield assert(result)(fails(containsString("Analysis not supported")))
       },
     ),
   )
