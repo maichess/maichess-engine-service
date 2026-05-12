@@ -1,0 +1,251 @@
+package maichess.engine.chess
+
+// SearchV2 — the bitboard alpha-beta engine (Search.scala) plus three
+// search-level enhancements, all gated to fire only in the main negamax
+// search (never in quiescence):
+//
+//   - Principal Variation Search (PVS): first move searched with the full
+//     [alpha, beta] window, the rest with a null window [alpha, alpha+1] and
+//     re-searched fully only on a surprise.
+//   - Late Move Reductions (LMR): late quiet moves in a non-check node at
+//     depth >= 3 are searched at reduced depth, re-searched at full depth only
+//     if the reduced search beats alpha.
+//   - Null Move Pruning (NMP): at depth >= 3, not in check, not at the root,
+//     not directly after another null move, and only when the side to move has
+//     non-pawn material (zugzwang guard), try a reduced search after passing
+//     the turn; if it still fails high, prune.
+//
+// Like Search, SearchV2 is a final class so each request gets its own
+// transposition table — no shared mutable state between concurrent searches.
+@SuppressWarnings(Array("org.wartremover.warts.Var", "org.wartremover.warts.Return", "org.wartremover.warts.DefaultArguments"))
+final class SearchV2:
+  private val INF     = 100000
+  private val MATE    = 99000
+  private val TT_SIZE = 1 << 20          // ~1M entries × 16 bytes = 16 MB
+  private val TT_MASK = (TT_SIZE - 1).toLong
+  private val EXACT = 0; private val LOWER = 1; private val UPPER = 2
+  private val MV = Array(100, 320, 330, 500, 900, 20000, 0)   // MVV-LVA values; index 6 guards NoPiece
+  private val NullMoveR = 3               // null-move search depth reduction
+
+  private val ttKeys  = new Array[Long](TT_SIZE)
+  private val ttData  = new Array[Long](TT_SIZE)
+  private val moveBuf = Array.ofDim[Int](128, 256)
+  private val mscores = Array.ofDim[Int](128, 256)
+
+  private var deadline  = 0L
+  private var rootBest  = Move.None
+  private var rootScore = 0
+  private var nodes     = 0
+  private var excluded  = Array.empty[Int]
+
+  private inline def isExcluded(mv: Int): Boolean =
+    var i = 0; var found = false
+    while i < excluded.length && !found do
+      if excluded(i) == mv then found = true
+      i += 1
+    found
+
+  // See Search.MinDepth — guarantees a bounded shallow search before the clock
+  // is consulted so a one-move tactic is never missed under tight time.
+  private val MinDepth = 2
+
+  def bestMove(pos: Position, timeLimitMs: Long): (Int, Int) =
+    val start = System.currentTimeMillis()
+    nodes     = 0
+    rootScore = 0
+    val initCnt = MoveGen.generate(pos, moveBuf(0))
+    rootBest = Move.None
+    var i = 0
+    while i < initCnt && rootBest == Move.None do
+      if LegalCheck.isLegal(pos, moveBuf(0)(i)) then rootBest = moveBuf(0)(i)
+      i += 1
+    deadline = Long.MaxValue
+    var depth = 1
+    while depth <= MinDepth do
+      negamax(pos, depth, -INF, INF, 0)
+      depth += 1
+    deadline = start + timeLimitMs
+    while depth < 64 && !timeUp() do
+      negamax(pos, depth, -INF, INF, 0)
+      depth += 1
+    (rootBest, rootScore)
+
+  private inline def timeUp(): Boolean = System.currentTimeMillis() > deadline
+
+  private inline def hasNonPawnMaterial(pos: Position, side: Int): Boolean =
+    (pos.byColor(side) & ~pos.pieceBB(side, PType.Pawn) & ~pos.pieceBB(side, PType.King)) != 0L
+
+  // wasNullMove is threaded as a parameter (never a field) so that the flag
+  // applies only to the null-move branch and never leaks into sibling lines.
+  private def negamax(pos: Position, depth: Int, aIn: Int, beta: Int, ply: Int, wasNullMove: Boolean = false): Int =
+    nodes += 1
+    if (nodes & 4095) == 0 && timeUp() then return 0
+    if depth == 0 then return quiesce(pos, aIn, beta, ply)
+
+    val idx  = (pos.hash & TT_MASK).toInt
+    val tdat = ttData(idx)
+    var ttMv = Move.None
+    if ttKeys(idx) == (pos.hash ^ tdat) then
+      ttMv = (tdat & 0xFFFF).toInt
+      val td = ((tdat >> 38) & 63).toInt
+      if td >= depth then
+        val ts = (((tdat >> 16) & 0xFFFFF) - 500000).toInt
+        val tf = ((tdat >> 36) & 3).toInt
+        if tf == EXACT then
+          if ply == 0 && LegalCheck.isLegal(pos, ttMv) then
+            rootBest = ttMv; rootScore = ts
+          return ts
+        if tf == LOWER && ts >= beta then return ts
+        if tf == UPPER && ts <= aIn  then return ts
+
+    val inCheck = LegalCheck.isInCheck(pos, pos.sideToMove)
+
+    // ── Null Move Pruning ─────────────────────────────────────────────────
+    if depth >= 3 && !inCheck && ply > 0 && !wasNullMove && hasNonPawnMaterial(pos, pos.sideToMove) then
+      val nd = depth - 1 - NullMoveR
+      pos.makeNullMove()
+      val nullScore = -negamax(pos, if nd < 0 then 0 else nd, -beta, -beta + 1, ply + 1, wasNullMove = true)
+      pos.unmakeNullMove()
+      if nullScore >= beta then return beta
+
+    val cnt = MoveGen.generate(pos, moveBuf(ply))
+    scoreM(pos, moveBuf(ply), mscores(ply), cnt, ttMv)
+
+    var alpha = aIn; var best = -INF; var bestMv = Move.None; var legal = 0
+    var i = 0
+    while i < cnt do
+      val mv = pick(moveBuf(ply), mscores(ply), cnt, i)
+      if !(ply == 0 && isExcluded(mv)) && LegalCheck.isLegal(pos, mv) then
+        legal += 1
+        pos.makeMove(mv)
+        val sc =
+          if legal == 1 then
+            -negamax(pos, depth - 1, -beta, -alpha, ply + 1)
+          else
+            val isQuiet = !Move.isCapture(mv) && !Move.isPromo(mv)
+            if depth >= 3 && legal >= 4 && isQuiet && !inCheck then
+              val rRaw = Math.max(1, (Math.log(depth.toDouble) * Math.log(legal.toDouble) / 2.0).toInt)
+              val r    = if rRaw > depth - 2 then depth - 2 else rRaw
+              val reduced = -negamax(pos, depth - 1 - r, -alpha - 1, -alpha, ply + 1)
+              if reduced > alpha then -negamax(pos, depth - 1, -beta, -alpha, ply + 1)
+              else reduced
+            else
+              val zw = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1)
+              if zw > alpha && zw < beta then -negamax(pos, depth - 1, -beta, -alpha, ply + 1)
+              else zw
+        pos.unmakeMove(mv)
+        if sc > best then
+          best = sc; bestMv = mv
+          if ply == 0 then { rootBest = mv; rootScore = sc }
+        if sc > alpha then alpha = sc
+        if alpha >= beta then
+          storeT(idx, pos.hash, mv, sc, depth, LOWER)
+          return alpha
+      i += 1
+
+    if legal == 0 then
+      return if inCheck then -(MATE - ply) else 0
+
+    storeT(idx, pos.hash, bestMv, best, depth, if best > aIn then EXACT else UPPER)
+    best
+
+  private def quiesce(pos: Position, aIn: Int, beta: Int, ply: Int): Int =
+    if timeUp() then return 0
+    val stand = Eval.evaluate(pos)
+    if stand >= beta then return stand
+    if ply >= 127    then return stand
+    var alpha = Math.max(aIn, stand)
+    val cnt = MoveGen.generateCaptures(pos, moveBuf(ply))
+    scoreM(pos, moveBuf(ply), mscores(ply), cnt, Move.None)
+    var i = 0
+    while i < cnt do
+      val mv = pick(moveBuf(ply), mscores(ply), cnt, i)
+      if LegalCheck.isLegal(pos, mv) then
+        pos.makeMove(mv)
+        val sc = -quiesce(pos, -beta, -alpha, ply + 1)
+        pos.unmakeMove(mv)
+        if sc >= beta then return sc
+        if sc > alpha then alpha = sc
+      i += 1
+    alpha
+
+  // Fixed-depth search with no time limit. Skips `excl` moves at the root (for multi-PV).
+  def bestMoveAtDepth(pos: Position, targetDepth: Int, excl: Array[Int]): (Int, Int) =
+    excluded  = excl
+    deadline  = Long.MaxValue
+    nodes     = 0
+    rootScore = 0
+    val initCnt = MoveGen.generate(pos, moveBuf(0))
+    rootBest = Move.None
+    var i = 0
+    while i < initCnt && rootBest == Move.None do
+      if !isExcluded(moveBuf(0)(i)) && LegalCheck.isLegal(pos, moveBuf(0)(i)) then
+        rootBest = moveBuf(0)(i)
+      i += 1
+    var depth = 1
+    while depth <= targetDepth do
+      negamax(pos, depth, -INF, INF, 0)
+      depth += 1
+    (rootBest, rootScore)
+
+  // Walks the transposition-table chain from `pos` to reconstruct the principal variation.
+  // Makes and unmakes moves on `pos` — the position is fully restored on return.
+  def extractPv(pos: Position, maxLength: Int): List[Int] =
+    val buf     = new Array[Int](maxLength)
+    val hashes  = new Array[Long](maxLength)
+    var len     = 0
+    var cont    = true
+    while cont && len < maxLength do
+      val idx  = (pos.hash & TT_MASK).toInt
+      val tdat = ttData(idx)
+      if ttKeys(idx) != (pos.hash ^ tdat) then cont = false
+      else
+        val mv = (tdat & 0xFFFF).toInt
+        var cycle = false
+        var j = 0
+        while j < len && !cycle do
+          if hashes(j) == pos.hash then cycle = true
+          j += 1
+        if mv == Move.None || cycle || !LegalCheck.isLegal(pos, mv) then cont = false
+        else
+          hashes(len) = pos.hash
+          buf(len)    = mv
+          len        += 1
+          pos.makeMove(mv)
+    var k = len - 1
+    while k >= 0 do
+      pos.unmakeMove(buf(k))
+      k -= 1
+    buf.take(len).toList
+
+  private def scoreM(pos: Position, mvs: Array[Int], sc: Array[Int], cnt: Int, ttMv: Int): Unit =
+    var i = 0
+    while i < cnt do
+      val mv = mvs(i)
+      sc(i) =
+        if mv == ttMv then 2000000
+        else if Move.isCapture(mv) then
+          val vic = if Move.flag(mv) == Move.FlagEP then PType.Pawn
+                    else Pieces.typeOf(Piece(pos.mailbox(Move.to(mv).toInt)))
+          val att = Pieces.typeOf(Piece(pos.mailbox(Move.from(mv).toInt)))
+          1000000 + MV(vic) * 10 - MV(att)
+        else if Move.isPromo(mv) then 500000
+        else 0
+      i += 1
+
+  // Partial selection sort: bring the highest-scored move at index i to the front.
+  private inline def pick(mvs: Array[Int], sc: Array[Int], cnt: Int, i: Int): Int =
+    var best = i; var j = i + 1
+    while j < cnt do
+      if sc(j) > sc(best) then best = j
+      j += 1
+    if best != i then
+      val tm = mvs(i); mvs(i) = mvs(best); mvs(best) = tm
+      val ts = sc(i);  sc(i) = sc(best);   sc(best) = ts
+    mvs(i)
+
+  // Pack entry: bits 0-15 = move, 16-35 = score+500000, 36-37 = flag, 38-43 = depth.
+  private inline def storeT(idx: Int, hash: Long, mv: Int, sc: Int, depth: Int, flag: Int): Unit =
+    val d = (mv & 0xFFFF).toLong | ((sc.toLong + 500000L) << 16) |
+            (flag.toLong << 36) | (depth.toLong << 38)
+    ttData(idx) = d; ttKeys(idx) = hash ^ d

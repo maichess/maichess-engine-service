@@ -66,9 +66,13 @@ maichess.engine
 │   ├── MoveGen.scala                ← Pseudo-legal move generator
 │   ├── LegalCheck.scala             ← Post-move legality filter
 │   ├── Eval.scala                   ← Static evaluation (material + PST + mobility)
-│   └── Search.scala                 ← Iterative-deepening negamax alpha-beta
+│   ├── Search.scala                 ← Tier 1: iterative-deepening negamax alpha-beta
+│   ├── SearchV2.scala               ← Tier 2: Search + LMR + null-move pruning + PVS
+│   └── basic/                       ← Tier 0: mailbox minimax engine (no bitboards)
 ├── domain/
-│   ├── BotConfig.scala              ← Bot descriptor (id, name, elo, time limit)
+│   ├── BotConfig.scala              ← Bot descriptor (id, name, elo, strategy, description, variant)
+│   ├── EngineVariant.scala          ← Engine tier enum (Basic, Base, EnhancedSearch, …)
+│   ├── TimingStrategy.scala         ← Fixed / Proportional / Aggressive move-time policies
 │   └── BotRegistry.scala            ← Authoritative list of available bots
 ├── service/
 │   ├── EngineService.scala          ← ZIO service trait
@@ -79,11 +83,19 @@ maichess.engine
 
 ## Chess engine architecture
 
-The `chess/` package is a self-contained bitboard engine ported from `maichess-mono/modules/bots/engine/`. It operates exclusively on FEN strings — `Position.fromFen` is the only entry point, and `Search.bestMove` returns a packed UCI move integer decoded by `Move.toUci`.
+The `chess/` package is a self-contained bitboard engine ported from `maichess-mono/modules/bots/engine/`. It operates exclusively on FEN strings — `Position.fromFen` is the only entry point, and `Search.bestMove` / `SearchV2.bestMove` return a packed UCI move integer decoded by `Move.toUci`.
 
-**`Search` is a `final class`, not an `object`** — each `GetBestMove` RPC call instantiates a fresh `Search` to avoid shared transposition-table corruption between concurrent requests.
+**Engine tiers.** Each `BotConfig` carries an `EngineVariant`; `EngineServiceLive.runSearch` dispatches on it:
+- `Basic` (tier 0) → `chess/basic/BasicSearch` — plain mailbox minimax, material-only eval, no TT.
+- `Base` (tier 1) → `chess/Search` — iterative-deepening negamax alpha-beta with a transposition table, quiescence search, and MVV-LVA move ordering.
+- `EnhancedSearch` (tier 2) → `chess/SearchV2` — `Search` plus Late Move Reductions, Null Move Pruning, and Principal Variation Search (all gated to the main search, never quiescence). NMP threads a `wasNullMove` flag as a parameter (never a field) and skips when the side to move has only king + pawns (zugzwang guard); it relies on `Position.makeNullMove`/`unmakeNullMove`.
+- Later tiers (`EnhancedOrdering`, `EnhancedEval`, `Knowledge`) are reserved but not yet implemented.
 
-Performance-critical code (`BB`, inline methods, `Position` hot path) uses `@SuppressWarnings` annotations for WartRemover's `Wart.Var` and `Wart.Return` where mutable state or early returns are required for correctness and performance.
+**`Search`/`SearchV2` are `final class`es, not `object`s** — each `GetBestMove` RPC call instantiates a fresh search to avoid shared transposition-table corruption between concurrent requests.
+
+When adding a new tier: create the new search class (copy the previous tier, do not modify it), add the `EngineVariant` case if missing, add the dispatch branch in `EngineServiceLive.runSearch`, register the bots in `BotRegistry`, and update `BotRegistrySpec`/`EngineServiceSpec`/`BotsServiceSpec` bot counts.
+
+Performance-critical code (`BB`, inline methods, `Position` hot path, `Search`/`SearchV2`) uses `@SuppressWarnings` annotations for WartRemover's `Wart.Var`, `Wart.Return`, and (in `SearchV2`) `Wart.DefaultArguments` where mutable state, early returns, or default parameters are required for correctness and performance.
 
 ## Code style
 
@@ -109,12 +121,12 @@ Performance-critical code (`BB`, inline methods, `Position` hot path) uses `@Sup
 
 ## Bot definitions
 
-Three bots are registered in `BotRegistry`:
+`BotRegistry.all` is the authoritative list (currently **27 bots** — keep the count assertions in the specs in sync when this changes). Bots come in three "speed" tiers (bullet ≈ 100 ms, blitz ≈ 1 s, classical ≈ 5 s) crossed with three timing strategies (`Fixed`, `Proportional` → `…_proportional`/`…_prop`, `Aggressive` → `…_aggressive`/`…_aggr`), per engine variant:
 
-| id | name | elo | time limit |
+| variant | id prefix | elo (bullet / blitz / classical) | search class |
 |---|---|---|---|
-| `bullet` | Bullet | 1400 | 100 ms |
-| `blitz` | Blitz | 1700 | 1 000 ms |
-| `classical` | Classical | 2000 | 5 000 ms |
+| `Basic` (tier 0) | `basic_*` | 700 / 800 / 900 | `BasicSearch` |
+| `Base` (tier 1) | `bullet`, `blitz`, `classical` (+ suffixes) | 1400 / 1700 / 2000 | `Search` |
+| `EnhancedSearch` (tier 2) | `search_*` | 1600 / 1900 / 2150 | `SearchV2` |
 
-Bot IDs are the canonical identifiers used by Match Manager in `GetBestMoveRequest.bot_id`.
+Each `BotConfig` has `id`, `name`, `elo`, `strategy: TimingStrategy`, `description`, and `variant: EngineVariant`. Bot IDs are the canonical identifiers used by Match Manager in `GetBestMoveRequest.bot_id`; only `Basic` bots are rejected by the `analyzePosition` (multi-PV) stream.

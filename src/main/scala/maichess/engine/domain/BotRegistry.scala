@@ -156,6 +156,81 @@ object BotRegistry:
       variant     = Basic,
       description = "The bare-bones engine at its most patient. Spends 5% of remaining time each move, which at the start of a fresh game amounts to about 5 seconds — comparable to the fixed variant but with a natural taper as the clock runs down.",
     ),
+
+    // ── Tier 2 (EnhancedSearch) bots — LMR + null-move pruning + PVS ──────────
+
+    BotConfig(
+      id          = "search_bullet",
+      name        = "Search Bullet",
+      elo         = 1600,
+      strategy    = Fixed(100L),
+      variant     = EnhancedSearch,
+      description = "Adds three high-impact search techniques to the bitboard engine: Late Move Reductions cut depth on moves likely to be bad, Null Move Pruning prunes subtrees where even passing a turn beats the opponent, and Principal Variation Search confirms the best move with a narrow re-search window. Together they roughly double effective search depth at the same time budget. Fixed at 100 ms per move.",
+    ),
+    BotConfig(
+      id          = "search_bullet_prop",
+      name        = "Search Bullet Prop",
+      elo         = 1600,
+      strategy    = Proportional(divisor = 40, minMs = 50L, fallbackMs = 100L),
+      variant     = EnhancedSearch,
+      description = "LMR, Null Move Pruning, and PVS layered on the bitboard engine roughly double effective search depth compared to the base tier. Allocates time proportionally — spreading the clock across estimated remaining moves so it never wastes it in a long game or rushes in a short one.",
+    ),
+    BotConfig(
+      id          = "search_bullet_aggr",
+      name        = "Search Bullet Aggressive",
+      elo         = 1600,
+      strategy    = Aggressive(fraction = 0.07, minMs = 50L, fallbackMs = 100L),
+      variant     = EnhancedSearch,
+      description = "LMR, Null Move Pruning, and PVS layered on the bitboard engine roughly double effective search depth. Spends 7% of remaining time per move, investing more in the opening where decisions carry the most weight.",
+    ),
+    BotConfig(
+      id          = "search_blitz",
+      name        = "Search Blitz",
+      elo         = 1900,
+      strategy    = Fixed(1000L),
+      variant     = EnhancedSearch,
+      description = "With 1 second and all three search enhancements active, this bot reaches depths where it begins to uncover complex middlegame tactics the base engine misses entirely. LMR, Null Move Pruning, and PVS together mean it wastes very little effort on bad moves.",
+    ),
+    BotConfig(
+      id          = "search_blitz_prop",
+      name        = "Search Blitz Prop",
+      elo         = 1900,
+      strategy    = Proportional(divisor = 30, minMs = 200L, fallbackMs = 1000L),
+      variant     = EnhancedSearch,
+      description = "LMR, Null Move Pruning, and PVS layered on the bitboard engine, with proportional time management. The bot adapts how long it thinks based on the game's progress, spending its clock where it matters most.",
+    ),
+    BotConfig(
+      id          = "search_blitz_aggr",
+      name        = "Search Blitz Aggressive",
+      elo         = 1900,
+      strategy    = Aggressive(fraction = 0.06, minMs = 200L, fallbackMs = 1000L),
+      variant     = EnhancedSearch,
+      description = "LMR, Null Move Pruning, and PVS layered on the bitboard engine. Spends 6% of remaining time per move — strong and deliberate in the opening and middlegame, quicker as the endgame simplifies.",
+    ),
+    BotConfig(
+      id          = "search_classical",
+      name        = "Search Classical",
+      elo         = 2150,
+      strategy    = Fixed(5000L),
+      variant     = EnhancedSearch,
+      description = "At 5 seconds per move with LMR, Null Move Pruning, and PVS active, this bot reaches search depths that would take the base engine several times longer to achieve. Expect sharp tactical awareness and consistent middlegame pressure — a challenging opponent for club-level players.",
+    ),
+    BotConfig(
+      id          = "search_classical_prop",
+      name        = "Search Classical Prop",
+      elo         = 2150,
+      strategy    = Proportional(divisor = 25, minMs = 500L, fallbackMs = 5000L),
+      variant     = EnhancedSearch,
+      description = "At full depth with all three search enhancements, this bot invests its time proportionally — roughly 5 seconds per move in a standard game, with flexibility to think longer if fewer moves remain.",
+    ),
+    BotConfig(
+      id          = "search_classical_aggr",
+      name        = "Search Classical Aggr",
+      elo         = 2150,
+      strategy    = Aggressive(fraction = 0.05, minMs = 500L, fallbackMs = 5000L),
+      variant     = EnhancedSearch,
+      description = "At full depth with LMR, Null Move Pruning, and PVS, this bot spends 5% of remaining time each move — front-loaded thinking in the opening, faster play as the position simplifies. Consistent tactical sharpness throughout the game.",
+    ),
   )
 
   def find(id: String): Option[BotConfig] = all.find(_.id == id)

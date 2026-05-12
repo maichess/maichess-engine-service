@@ -218,6 +218,33 @@ final class Position:
       else
         putPieceRaw(Piece(capPiece), to)
 
+  // ── Null move ─────────────────────────────────────────────────────────────
+  // Flips the side to move without moving a piece and clears the en-passant
+  // square. Used by null-move pruning. Pushes/pops the same undo stack slots as
+  // makeMove (with NoPiece as the "captured" piece) so unmakeNullMove restores
+  // epSquare, castlingRights, halfMoveClock and hash exactly.
+  def makeNullMove(): Unit =
+    undoState(undoTop)    = halfMoveClock | ((epSquare + 1) << 11) | (castlingRights << 18)
+    undoHash(undoTop)     = hash
+    undoCapPiece(undoTop) = NoPiece.toInt
+    undoTop += 1
+    clearEpHash()
+    epSquare = Sq.None.toInt
+    hash ^= Zobrist.sideToMove
+    halfMoveClock += 1
+    if sideToMove == Col.Black then fullMoveNumber += 1
+    sideToMove ^= 1
+
+  def unmakeNullMove(): Unit =
+    undoTop -= 1
+    sideToMove ^= 1
+    if sideToMove == Col.Black then fullMoveNumber -= 1
+    val state = undoState(undoTop)
+    castlingRights = state >> 18
+    epSquare       = ((state >> 11) & 127) - 1
+    halfMoveClock  = state & 0x7FF
+    hash           = undoHash(undoTop)
+
   // ── Computed bitboard helpers ─────────────────────────────────────────────
   inline def pieceBB(color: Int, ptype: Int): Long = pieces(Pieces.make(color, ptype).toInt)
 
