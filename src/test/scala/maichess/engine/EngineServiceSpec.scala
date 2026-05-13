@@ -18,9 +18,9 @@ object EngineServiceSpec extends ZIOSpecDefault:
   def spec = suite("EngineServiceLive")(
 
     suite("listBots")(
-      test("returns all thirty-six bots") {
+      test("returns all forty-five bots") {
         for bots <- svc.listBots
-        yield assertTrue(bots.length == 36)
+        yield assertTrue(bots.length == 45)
       },
       test("first three bot ids are the bullet variants") {
         for bots <- svc.listBots
@@ -128,6 +128,29 @@ object EngineServiceSpec extends ZIOSpecDefault:
       },
       test("fails when the search throws on a degenerate position") {
         for result <- svc.bestMove(noKingFen, "ordering_classical", None).exit
+        yield assert(result)(fails(containsString("Search failed")))
+      },
+    ),
+
+    suite("bestMove — enhanced eval engine (EnhancedEval bots)")(
+      test("returns a valid UCI move from the starting position") {
+        for result <- svc.bestMove(startFen, "eval_bullet", None)
+        yield
+          val (move, _) = result
+          assertTrue(move.length >= 4 && move.length <= 5)
+      },
+      test("finds the mate-in-one") {
+        for result <- svc.bestMove(mateIn1Fen, "eval_bullet", None)
+        yield
+          val (move, _) = result
+          assertTrue(move == "d8h4")
+      },
+      test("fails when there are no legal moves in a mated position") {
+        for result <- svc.bestMove(mateFen, "eval_blitz", None).exit
+        yield assert(result)(fails(containsString("No legal moves")))
+      },
+      test("fails when the search throws on a degenerate position") {
+        for result <- svc.bestMove(noKingFen, "eval_classical", None).exit
         yield assert(result)(fails(containsString("Search failed")))
       },
     ),

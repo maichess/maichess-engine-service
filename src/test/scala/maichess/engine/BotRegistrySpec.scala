@@ -29,13 +29,19 @@ object BotRegistrySpec extends ZIOSpecDefault:
     "ordering_classical", "ordering_classical_prop", "ordering_classical_aggr",
   )
 
-  private val allIds = baseIds ::: basicIds ::: searchIds ::: orderingIds
+  private val evalIds = List(
+    "eval_bullet", "eval_bullet_prop", "eval_bullet_aggr",
+    "eval_blitz",  "eval_blitz_prop",  "eval_blitz_aggr",
+    "eval_classical", "eval_classical_prop", "eval_classical_aggr",
+  )
+
+  private val allIds = baseIds ::: basicIds ::: searchIds ::: orderingIds ::: evalIds
 
   def spec = suite("BotRegistry")(
 
     suite("all")(
-      test("exposes exactly thirty-six bots") {
-        assertTrue(BotRegistry.all.length == 36)
+      test("exposes exactly forty-five bots") {
+        assertTrue(BotRegistry.all.length == 45)
       },
       test("bots have the expected ids in order") {
         assertTrue(BotRegistry.all.map(_.id) == allIds)
@@ -45,16 +51,17 @@ object BotRegistrySpec extends ZIOSpecDefault:
           b.id == "bullet" || b.id == "blitz" || b.id == "classical" ||
           b.id == "basic_bullet" || b.id == "basic_blitz" || b.id == "basic_classical" ||
           b.id == "search_bullet" || b.id == "search_blitz" || b.id == "search_classical" ||
-          b.id == "ordering_bullet" || b.id == "ordering_blitz" || b.id == "ordering_classical")
-        assertTrue(fixed.length == 12 && fixed.forall(_.strategy.isInstanceOf[TimingStrategy.Fixed]))
+          b.id == "ordering_bullet" || b.id == "ordering_blitz" || b.id == "ordering_classical" ||
+          b.id == "eval_bullet" || b.id == "eval_blitz" || b.id == "eval_classical")
+        assertTrue(fixed.length == 15 && fixed.forall(_.strategy.isInstanceOf[TimingStrategy.Fixed]))
       },
       test("proportional bots use the Proportional strategy") {
         val props = BotRegistry.all.filter(b => b.id.endsWith("_proportional") || b.id.endsWith("_prop"))
-        assertTrue(props.length == 12 && props.forall(_.strategy.isInstanceOf[TimingStrategy.Proportional]))
+        assertTrue(props.length == 15 && props.forall(_.strategy.isInstanceOf[TimingStrategy.Proportional]))
       },
       test("aggressive bots use the Aggressive strategy") {
         val aggs = BotRegistry.all.filter(b => b.id.endsWith("_aggressive") || b.id.endsWith("_aggr"))
-        assertTrue(aggs.length == 12 && aggs.forall(_.strategy.isInstanceOf[TimingStrategy.Aggressive]))
+        assertTrue(aggs.length == 15 && aggs.forall(_.strategy.isInstanceOf[TimingStrategy.Aggressive]))
       },
       test("all bots have a non-empty description") {
         assertTrue(BotRegistry.all.forall(_.description.nonEmpty))
@@ -76,6 +83,12 @@ object BotRegistrySpec extends ZIOSpecDefault:
       },
       test("all ordering bots have elo from the enhanced-ordering tier") {
         assertTrue(orderingIds.forall(id => BotRegistry.find(id).exists(b => Set(1750, 2050, 2300).contains(b.elo))))
+      },
+      test("all eval bots have variant EnhancedEval") {
+        assertTrue(evalIds.forall(id => BotRegistry.find(id).exists(_.variant == EngineVariant.EnhancedEval)))
+      },
+      test("all eval bots have elo from the enhanced-eval tier") {
+        assertTrue(evalIds.forall(id => BotRegistry.find(id).exists(b => Set(1900, 2200, 2450).contains(b.elo))))
       },
     ),
 

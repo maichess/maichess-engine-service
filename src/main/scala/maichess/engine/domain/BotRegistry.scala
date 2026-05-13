@@ -306,6 +306,81 @@ object BotRegistry:
       variant     = EnhancedOrdering,
       description = "Five seconds of enhanced-ordering search, spent at 5% of remaining time per move. Front-loads its strongest thinking into the critical phases of the game, then plays more quickly as positions simplify.",
     ),
+
+    // ── Tier 4 (EnhancedEval) bots — king safety, pawn structure, full mobility ──
+
+    BotConfig(
+      id          = "eval_bullet",
+      name        = "Eval Bullet",
+      elo         = 1900,
+      strategy    = Fixed(100L),
+      variant     = EnhancedEval,
+      description = "The ordering-tier search engine now paired with a richer positional evaluation: king safety (exposed kings are penalised), pawn structure (doubled, isolated, and passed pawns with rank-scaled bonuses), rook placement bonuses (open files, 7th rank), and full mobility evaluation for all pieces. All terms taper smoothly between opening and endgame. Tactically sharp and positionally aware — a challenging opponent even for strong club players. Fixed at 100 ms per move.",
+    ),
+    BotConfig(
+      id          = "eval_bullet_prop",
+      name        = "Eval Bullet Prop",
+      elo         = 1900,
+      strategy    = Proportional(divisor = 40, minMs = 50L, fallbackMs = 100L),
+      variant     = EnhancedEval,
+      description = "Rich positional evaluation — king safety, pawn structure, rook bonuses, and full piece mobility — layered on top of the enhanced-ordering search. Proportional time allocation keeps its clock balanced across the game.",
+    ),
+    BotConfig(
+      id          = "eval_bullet_aggr",
+      name        = "Eval Bullet Aggressive",
+      elo         = 1900,
+      strategy    = Aggressive(fraction = 0.07, minMs = 50L, fallbackMs = 100L),
+      variant     = EnhancedEval,
+      description = "Rich positional evaluation layered on top of the enhanced-ordering search. Spends 7% of remaining time per move, thinking hardest in the opening and middlegame where positional understanding matters most.",
+    ),
+    BotConfig(
+      id          = "eval_blitz",
+      name        = "Eval Blitz",
+      elo         = 2200,
+      strategy    = Fixed(1000L),
+      variant     = EnhancedEval,
+      description = "With 1 second and a full positional model, this bot plays in a recognisably strategic way: it prefers castled kings, connected pawns, active rooks, and mobile pieces — not just short-term tactics. A significant step up from simpler tiers at the same time control.",
+    ),
+    BotConfig(
+      id          = "eval_blitz_prop",
+      name        = "Eval Blitz Prop",
+      elo         = 2200,
+      strategy    = Proportional(divisor = 30, minMs = 200L, fallbackMs = 1000L),
+      variant     = EnhancedEval,
+      description = "Full positional model with proportional time management. The bot adapts its thinking time to the game's rhythm, allocating more when positions are complex and less when play is straightforward.",
+    ),
+    BotConfig(
+      id          = "eval_blitz_aggr",
+      name        = "Eval Blitz Aggressive",
+      elo         = 2200,
+      strategy    = Aggressive(fraction = 0.06, minMs = 200L, fallbackMs = 1000L),
+      variant     = EnhancedEval,
+      description = "Full positional model with an aggressive time fraction — invests 6% of remaining time per move. Plays its most deliberate, strategically rich chess in the opening and early middlegame.",
+    ),
+    BotConfig(
+      id          = "eval_classical",
+      name        = "Eval Classical",
+      elo         = 2450,
+      strategy    = Fixed(5000L),
+      variant     = EnhancedEval,
+      description = "Given 5 seconds with the complete evaluation model, this bot plays at a strong amateur level. It handles king safety, pawn breaks, rook activation, and piece coordination in a coherent, strategic style. The strongest evaluation-based bot in the roster — tough for most club players.",
+    ),
+    BotConfig(
+      id          = "eval_classical_prop",
+      name        = "Eval Classical Prop",
+      elo         = 2450,
+      strategy    = Proportional(divisor = 25, minMs = 500L, fallbackMs = 5000L),
+      variant     = EnhancedEval,
+      description = "Five seconds with the full positional evaluation, distributed proportionally. A deeply strategic bot that manages its time intelligently across the whole game.",
+    ),
+    BotConfig(
+      id          = "eval_classical_aggr",
+      name        = "Eval Classical Aggr",
+      elo         = 2450,
+      strategy    = Aggressive(fraction = 0.05, minMs = 500L, fallbackMs = 5000L),
+      variant     = EnhancedEval,
+      description = "Five seconds with the full positional evaluation, spending 5% of remaining time per move. Plays its most strategically profound chess early, then simplifies efficiently as the endgame approaches.",
+    ),
   )
 
   def find(id: String): Option[BotConfig] = all.find(_.id == id)

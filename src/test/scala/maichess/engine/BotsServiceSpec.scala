@@ -16,10 +16,10 @@ object BotsServiceSpec extends ZIOSpecDefault:
   def spec = suite("BotsServiceImpl")(
 
     suite("listBots")(
-      test("returns all thirty-six bots as proto messages") {
+      test("returns all forty-five bots as proto messages") {
         for resp <- svc.listBots(ListBotsRequest())
         yield
-          assertTrue(resp.bots.length == 36) &&
+          assertTrue(resp.bots.length == 45) &&
           assertTrue(resp.bots.head.id          == "bullet") &&
           assertTrue(resp.bots.head.name        == "Bullet") &&
           assertTrue(resp.bots.head.elo         == 1400) &&
