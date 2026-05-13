@@ -68,6 +68,7 @@ maichess.engine
 │   ├── Eval.scala                   ← Static evaluation (material + PST + mobility)
 │   ├── Search.scala                 ← Tier 1: iterative-deepening negamax alpha-beta
 │   ├── SearchV2.scala               ← Tier 2: Search + LMR + null-move pruning + PVS
+│   ├── SearchV3.scala               ← Tier 3: SearchV2 + killers + history + SEE + aspiration + check extensions
 │   └── basic/                       ← Tier 0: mailbox minimax engine (no bitboards)
 ├── domain/
 │   ├── BotConfig.scala              ← Bot descriptor (id, name, elo, strategy, description, variant)
@@ -89,9 +90,10 @@ The `chess/` package is a self-contained bitboard engine ported from `maichess-m
 - `Basic` (tier 0) → `chess/basic/BasicSearch` — plain mailbox minimax, material-only eval, no TT.
 - `Base` (tier 1) → `chess/Search` — iterative-deepening negamax alpha-beta with a transposition table, quiescence search, and MVV-LVA move ordering.
 - `EnhancedSearch` (tier 2) → `chess/SearchV2` — `Search` plus Late Move Reductions, Null Move Pruning, and Principal Variation Search (all gated to the main search, never quiescence). NMP threads a `wasNullMove` flag as a parameter (never a field) and skips when the side to move has only king + pawns (zugzwang guard); it relies on `Position.makeNullMove`/`unmakeNullMove`.
-- Later tiers (`EnhancedOrdering`, `EnhancedEval`, `Knowledge`) are reserved but not yet implemented.
+- `EnhancedOrdering` (tier 3) → `chess/SearchV3` — `SearchV2` plus killer moves (two quiet slots per ply), the history heuristic (`history(side)(from)(to)`, clamped to ±2²⁰), SEE-based capture ordering (`seeMove`), aspiration windows in the iterative-deepening loop, and check extensions (capped by ply so a perpetual-check line cannot blow up the recursion). Killers/history are per-instance fields, never static.
+- Later tiers (`EnhancedEval`, `Knowledge`) are reserved but not yet implemented.
 
-**`Search`/`SearchV2` are `final class`es, not `object`s** — each `GetBestMove` RPC call instantiates a fresh search to avoid shared transposition-table corruption between concurrent requests.
+**`Search`/`SearchV2`/`SearchV3` are `final class`es, not `object`s** — each `GetBestMove` RPC call instantiates a fresh search to avoid shared transposition-table corruption between concurrent requests.
 
 When adding a new tier: create the new search class (copy the previous tier, do not modify it), add the `EngineVariant` case if missing, add the dispatch branch in `EngineServiceLive.runSearch`, register the bots in `BotRegistry`, and update `BotRegistrySpec`/`EngineServiceSpec`/`BotsServiceSpec` bot counts.
 
@@ -121,12 +123,13 @@ Performance-critical code (`BB`, inline methods, `Position` hot path, `Search`/`
 
 ## Bot definitions
 
-`BotRegistry.all` is the authoritative list (currently **27 bots** — keep the count assertions in the specs in sync when this changes). Bots come in three "speed" tiers (bullet ≈ 100 ms, blitz ≈ 1 s, classical ≈ 5 s) crossed with three timing strategies (`Fixed`, `Proportional` → `…_proportional`/`…_prop`, `Aggressive` → `…_aggressive`/`…_aggr`), per engine variant:
+`BotRegistry.all` is the authoritative list (currently **36 bots** — keep the count assertions in the specs in sync when this changes). Bots come in three "speed" tiers (bullet ≈ 100 ms, blitz ≈ 1 s, classical ≈ 5 s) crossed with three timing strategies (`Fixed`, `Proportional` → `…_proportional`/`…_prop`, `Aggressive` → `…_aggressive`/`…_aggr`), per engine variant:
 
 | variant | id prefix | elo (bullet / blitz / classical) | search class |
 |---|---|---|---|
 | `Basic` (tier 0) | `basic_*` | 700 / 800 / 900 | `BasicSearch` |
 | `Base` (tier 1) | `bullet`, `blitz`, `classical` (+ suffixes) | 1400 / 1700 / 2000 | `Search` |
 | `EnhancedSearch` (tier 2) | `search_*` | 1600 / 1900 / 2150 | `SearchV2` |
+| `EnhancedOrdering` (tier 3) | `ordering_*` | 1750 / 2050 / 2300 | `SearchV3` |
 
 Each `BotConfig` has `id`, `name`, `elo`, `strategy: TimingStrategy`, `description`, and `variant: EngineVariant`. Bot IDs are the canonical identifiers used by Match Manager in `GetBestMoveRequest.bot_id`; only `Basic` bots are rejected by the `analyzePosition` (multi-PV) stream.

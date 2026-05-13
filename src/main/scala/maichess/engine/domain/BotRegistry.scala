@@ -231,6 +231,81 @@ object BotRegistry:
       variant     = EnhancedSearch,
       description = "At full depth with LMR, Null Move Pruning, and PVS, this bot spends 5% of remaining time each move — front-loaded thinking in the opening, faster play as the position simplifies. Consistent tactical sharpness throughout the game.",
     ),
+
+    // ── Tier 3 (EnhancedOrdering) bots — killers + history + SEE + aspiration + check extensions ──
+
+    BotConfig(
+      id          = "ordering_bullet",
+      name        = "Ordering Bullet",
+      elo         = 1750,
+      strategy    = Fixed(100L),
+      variant     = EnhancedOrdering,
+      description = "Extends the enhanced search engine with five move-ordering improvements: killer moves remember tactics that recently caused cutoffs; history scores track which quiet moves are statistically strong; SEE-based capture ordering evaluates full exchange sequences rather than just piece values; aspiration windows narrow the search between iterations; and check extensions follow tactical check chains deeper. More pruning in the same time means more depth. Fixed at 100 ms per move.",
+    ),
+    BotConfig(
+      id          = "ordering_bullet_prop",
+      name        = "Ordering Bullet Prop",
+      elo         = 1750,
+      strategy    = Proportional(divisor = 40, minMs = 50L, fallbackMs = 100L),
+      variant     = EnhancedOrdering,
+      description = "Five move-ordering enhancements — killers, history heuristic, SEE captures, aspiration windows, and check extensions — make every node of the search count. Proportional time allocation keeps the clock balanced across the game.",
+    ),
+    BotConfig(
+      id          = "ordering_bullet_aggr",
+      name        = "Ordering Bullet Aggressive",
+      elo         = 1750,
+      strategy    = Aggressive(fraction = 0.07, minMs = 50L, fallbackMs = 100L),
+      variant     = EnhancedOrdering,
+      description = "Five move-ordering enhancements — killers, history heuristic, SEE captures, aspiration windows, and check extensions — compound to reduce wasted search effort dramatically. Spends 7% of remaining time per move, investing most heavily in the opening and middlegame.",
+    ),
+    BotConfig(
+      id          = "ordering_blitz",
+      name        = "Ordering Blitz",
+      elo         = 2050,
+      strategy    = Fixed(1000L),
+      variant     = EnhancedOrdering,
+      description = "With 1 second and all five ordering improvements active, this bot's search reaches depths where it reliably finds multi-move combinations that simpler tiers miss. Killer moves and history scores mean it rarely spends time on obviously bad moves.",
+    ),
+    BotConfig(
+      id          = "ordering_blitz_prop",
+      name        = "Ordering Blitz Prop",
+      elo         = 2050,
+      strategy    = Proportional(divisor = 30, minMs = 200L, fallbackMs = 1000L),
+      variant     = EnhancedOrdering,
+      description = "All five move-ordering improvements with proportional time management. The bot adjusts its thinking time based on the game's progress, spending wisely across the expected remaining moves.",
+    ),
+    BotConfig(
+      id          = "ordering_blitz_aggr",
+      name        = "Ordering Blitz Aggressive",
+      elo         = 2050,
+      strategy    = Aggressive(fraction = 0.06, minMs = 200L, fallbackMs = 1000L),
+      variant     = EnhancedOrdering,
+      description = "All five move-ordering improvements with an aggressive 6% time fraction. Thinks hardest in the opening and middlegame where the ordering enhancements deliver the biggest benefit.",
+    ),
+    BotConfig(
+      id          = "ordering_classical",
+      name        = "Ordering Classical",
+      elo         = 2300,
+      strategy    = Fixed(5000L),
+      variant     = EnhancedOrdering,
+      description = "Given 5 seconds with all move-ordering enhancements, this is one of the strongest search-only bots in the roster. It rarely overlooks tactical opportunities and handles positional manoeuvring with notable consistency. A serious opponent for intermediate-to-advanced club players.",
+    ),
+    BotConfig(
+      id          = "ordering_classical_prop",
+      name        = "Ordering Classical Prop",
+      elo         = 2300,
+      strategy    = Proportional(divisor = 25, minMs = 500L, fallbackMs = 5000L),
+      variant     = EnhancedOrdering,
+      description = "Five seconds of enhanced-ordering search, distributed proportionally. This bot manages its clock carefully, ensuring it always has time to think without wasting it in simplified endgames.",
+    ),
+    BotConfig(
+      id          = "ordering_classical_aggr",
+      name        = "Ordering Classical Aggr",
+      elo         = 2300,
+      strategy    = Aggressive(fraction = 0.05, minMs = 500L, fallbackMs = 5000L),
+      variant     = EnhancedOrdering,
+      description = "Five seconds of enhanced-ordering search, spent at 5% of remaining time per move. Front-loads its strongest thinking into the critical phases of the game, then plays more quickly as positions simplify.",
+    ),
   )
 
   def find(id: String): Option[BotConfig] = all.find(_.id == id)

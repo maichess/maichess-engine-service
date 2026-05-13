@@ -2,7 +2,7 @@ package maichess.engine.service
 
 import zio.{IO, UIO, ULayer, ZIO, ZLayer}
 import zio.stream.ZStream
-import maichess.engine.chess.{Move, Position, Search, SearchV2}
+import maichess.engine.chess.{Move, Position, Search, SearchV2, SearchV3}
 import maichess.engine.chess.basic.{BasicPosition, BasicSearch}
 import maichess.engine.domain.{AnalysisUpdate, BotConfig, BotRegistry, EngineVariant, PrincipalVariation}
 
@@ -56,6 +56,15 @@ final class EngineServiceLive extends EngineService:
         for
           pos           <- ZIO.fromEither(Position.fromFen(fen))
           result        <- ZIO.attempt(new SearchV2().bestMove(pos, moveTimeMs))
+                             .mapError(e => s"Search failed: ${e.getMessage}")
+          (move, score)  = result
+          _             <- ZIO.fail(s"No legal moves in position: $fen").when(move == Move.None)
+        yield (Move.toUci(move), score)
+
+      case EngineVariant.EnhancedOrdering =>
+        for
+          pos           <- ZIO.fromEither(Position.fromFen(fen))
+          result        <- ZIO.attempt(new SearchV3().bestMove(pos, moveTimeMs))
                              .mapError(e => s"Search failed: ${e.getMessage}")
           (move, score)  = result
           _             <- ZIO.fail(s"No legal moves in position: $fen").when(move == Move.None)
