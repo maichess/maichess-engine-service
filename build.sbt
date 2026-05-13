@@ -54,7 +54,7 @@ lazy val root = (project in file("."))
     coverageEnabled          := true,
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum    := true,
-    coverageExcludedFiles    := ".*Main.*",
+    coverageExcludedFiles    := ".*Main.*|.*TablebaseClientLive.*",
     // chess/ is excluded (timing-dependent branches) but chess/basic/ is NOT — it has 100% coverage.
     coverageExcludedPackages := "maichess\\.engine\\.chess\\.(?!basic\\.).*",
 

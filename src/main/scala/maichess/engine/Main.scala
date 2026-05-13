@@ -17,6 +17,7 @@ import zio.{Runtime, Unsafe, ZIO, ZIOAppDefault}
 import maichess.engine.chess.{Position, Search}
 import maichess.engine.grpc.BotsServiceImpl
 import maichess.engine.service.EngineServiceLive
+import maichess.engine.service.clients.TablebaseClientLive
 import maichess.engine.v1.bots.bots.{
   AnalysisUpdate    => ProtoAnalysisUpdate,
   AnalyzePositionRequest,
@@ -73,7 +74,7 @@ object Main extends ZIOAppDefault:
             ZIO.logInfo(s"gRPC server listening on port $port") *> ZIO.never
           }
         }
-      }.provide(BotsServiceImpl.layer, EngineServiceLive.layer)
+      }.provide(BotsServiceImpl.layer, EngineServiceLive.layer, TablebaseClientLive.layer)
     }
 
   private def startServer(

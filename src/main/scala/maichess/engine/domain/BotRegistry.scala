@@ -381,6 +381,57 @@ object BotRegistry:
       variant     = EnhancedEval,
       description = "Five seconds with the full positional evaluation, spending 5% of remaining time per move. Plays its most strategically profound chess early, then simplifies efficiently as the endgame approaches.",
     ),
+
+    // ── Tier 5 (Knowledge) bots — opening book + endgame tablebase probing ──
+
+    BotConfig(
+      id          = "knowledge_blitz",
+      name        = "Knowledge Blitz",
+      elo         = 2350,
+      strategy    = Fixed(1000L),
+      variant     = Knowledge,
+      description = "The strongest tier, augmented with two pre-computed databases. In the opening, a professional opening book provides theory-correct moves instantly, conserving search time for the critical middlegame. When the board simplifies to seven or fewer pieces, a tablebase query delivers provably perfect play — win, draw, or loss is known with certainty, along with exactly how many moves it will take. Fixed at 1 second per move with expert-level knowledge at both ends of the game.",
+    ),
+    BotConfig(
+      id          = "knowledge_blitz_prop",
+      name        = "Knowledge Blitz Prop",
+      elo         = 2350,
+      strategy    = Proportional(divisor = 30, minMs = 200L, fallbackMs = 1000L),
+      variant     = Knowledge,
+      description = "Opening book in the early moves, endgame tablebase perfection when pieces come off the board, and the full positional evaluation engine in between. Proportional time allocation lets it invest saved opening time into the complex middlegame where thinking matters most.",
+    ),
+    BotConfig(
+      id          = "knowledge_blitz_aggr",
+      name        = "Knowledge Blitz Aggressive",
+      elo         = 2350,
+      strategy    = Aggressive(fraction = 0.06, minMs = 200L, fallbackMs = 1000L),
+      variant     = Knowledge,
+      description = "Opening book in the first moves, tablebase certainty in the endgame, and an aggressive 6% time fraction through the middlegame. Plays its best chess in the phases where good decisions are hardest to find.",
+    ),
+    BotConfig(
+      id          = "knowledge_classical",
+      name        = "Knowledge Classical",
+      elo         = 2600,
+      strategy    = Fixed(5000L),
+      variant     = Knowledge,
+      description = "The pinnacle of the roster. Five seconds per move with an opening book, endgame tablebases (provably perfect for up to 7 pieces), and the full evaluation and ordering stack beneath. Plays theory-correct openings, converts middlegame advantages with strategic precision, and closes endgames without error. Appropriate for advanced club players and above.",
+    ),
+    BotConfig(
+      id          = "knowledge_classical_prop",
+      name        = "Knowledge Classical Prop",
+      elo         = 2600,
+      strategy    = Proportional(divisor = 25, minMs = 500L, fallbackMs = 5000L),
+      variant     = Knowledge,
+      description = "The pinnacle of the roster: opening book, endgame tablebases, full positional evaluation, and proportional time management. Saves time where it can — book moves are instant — and invests it where it counts, in the complex middlegame.",
+    ),
+    BotConfig(
+      id          = "knowledge_classical_aggr",
+      name        = "Knowledge Classical Aggr",
+      elo         = 2600,
+      strategy    = Aggressive(fraction = 0.05, minMs = 500L, fallbackMs = 5000L),
+      variant     = Knowledge,
+      description = "The pinnacle of the roster: opening book, endgame tablebases, full positional evaluation, and an aggressive 5% time fraction. Plays most deliberately in the opening and middlegame; relies on tablebase certainty to close endgames without spending the clock.",
+    ),
   )
 
   def find(id: String): Option[BotConfig] = all.find(_.id == id)

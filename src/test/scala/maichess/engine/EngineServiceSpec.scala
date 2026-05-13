@@ -5,6 +5,7 @@ import zio.test.*
 import zio.test.Assertion.*
 import zio.stream.ZStream
 import maichess.engine.service.EngineServiceLive
+import maichess.engine.service.clients.TablebaseClient
 
 object EngineServiceSpec extends ZIOSpecDefault:
 
@@ -12,15 +13,16 @@ object EngineServiceSpec extends ZIOSpecDefault:
   private val mateIn1Fen = "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2"
   private val mateFen    = "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4"
   private val noKingFen  = "k7/8/8/8/8/8/8/8 w - - 0 1"
+  private val kqkFen     = "8/8/8/4k3/8/3K4/8/3Q4 w - - 0 1"
 
-  private val svc = new EngineServiceLive()
+  private val svc = new EngineServiceLive(TablebaseClient.noop)
 
   def spec = suite("EngineServiceLive")(
 
     suite("listBots")(
-      test("returns all forty-five bots") {
+      test("returns all fifty-one bots") {
         for bots <- svc.listBots
-        yield assertTrue(bots.length == 45)
+        yield assertTrue(bots.length == 51)
       },
       test("first three bot ids are the bullet variants") {
         for bots <- svc.listBots
@@ -155,6 +157,30 @@ object EngineServiceSpec extends ZIOSpecDefault:
       },
     ),
 
+    suite("bestMove — knowledge engine (Knowledge bots)")(
+      test("returns a valid UCI move from the starting position") {
+        for result <- svc.bestMove(startFen, "knowledge_blitz", None)
+        yield
+          val (move, _) = result
+          assertTrue(move.length >= 4 && move.length <= 5)
+      },
+      test("returns a valid UCI move in a low-piece endgame") {
+        // The noop tablebase client falls through; the book likely misses; search produces a legal move.
+        for result <- svc.bestMove(kqkFen, "knowledge_classical", None)
+        yield
+          val (move, _) = result
+          assertTrue(move.length >= 4 && move.length <= 5)
+      },
+      test("fails when there are no legal moves in a mated position") {
+        for result <- svc.bestMove(mateFen, "knowledge_blitz", None).exit
+        yield assert(result)(fails(containsString("No legal moves")))
+      },
+      test("fails when the search throws on a degenerate position") {
+        for result <- svc.bestMove(noKingFen, "knowledge_classical", None).exit
+        yield assert(result)(fails(containsString("Search failed")))
+      },
+    ),
+
     suite("bestMove — with game clock")(
       test("returns a valid move when remaining time is provided") {
         // Some(2000L) → max(50, 2000/40) = 50 ms move time
@@ -200,13 +226,22 @@ object EngineServiceSpec extends ZIOSpecDefault:
         for updates <- svc.analyzePosition(startFen, "bullet", 30).take(1).runCollect
         yield assertTrue(updates.head.lines.length <= 20)
       },
-//      test("stream terminates via stagnation") {
-//        // mateIn1Fen: depth 2 finds Qh4# (MATE score). Depth 3 returns the same move and score.
-//        // stagnated() sees two identical consecutive results and returns true, ending the stream.
-//        // Exercises the stagnated() true branch including the moves.headOption flatMap path.
-//        for updates <- svc.analyzePosition(mateIn1Fen, "bullet", 1).runCollect
-//        yield assertTrue(updates.nonEmpty)
-//      },
+      test("stream terminates via stagnation") {
+        // mateIn1Fen: depth 2 finds Qh4# (MATE score). Depth 3 returns the same move and score.
+        // stagnated() sees two identical consecutive results and returns true, ending the stream.
+        // Exercises the stagnated() true branch including the moves.headOption flatMap path.
+        for updates <- svc.analyzePosition(mateIn1Fen, "bullet", 1).runCollect
+        yield assertTrue(updates.nonEmpty)
+      },
+      test("EngineServiceLive.layer materializes with a TablebaseClient dependency") {
+        val program =
+          ZIO.serviceWithZIO[maichess.engine.service.EngineService](_.listBots)
+        for bots <- program.provide(
+                      maichess.engine.service.EngineServiceLive.layer,
+                      ZLayer.succeed(TablebaseClient.noop),
+                    )
+        yield assertTrue(bots.length == 51)
+      },
       test("analysis fails gracefully for a position where the search throws") {
         // The degenerate position has no white king; bestMoveAtDepth throws
         // ArrayIndexOutOfBoundsException, which is caught by ZIO.attemptBlocking

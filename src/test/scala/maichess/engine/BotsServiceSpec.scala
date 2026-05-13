@@ -1,9 +1,11 @@
 package maichess.engine
 
 import io.grpc.Status
+import zio.ZIO
 import zio.test.*
 import maichess.engine.grpc.BotsServiceImpl
 import maichess.engine.service.EngineServiceLive
+import maichess.engine.service.clients.TablebaseClient
 import maichess.engine.v1.bots.bots.{AnalyzePositionRequest, GetBestMoveRequest, ListBotsRequest}
 
 object BotsServiceSpec extends ZIOSpecDefault:
@@ -11,15 +13,15 @@ object BotsServiceSpec extends ZIOSpecDefault:
   private val startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
   private def svc: BotsServiceImpl =
-    new BotsServiceImpl(new EngineServiceLive())
+    new BotsServiceImpl(new EngineServiceLive(TablebaseClient.noop))
 
   def spec = suite("BotsServiceImpl")(
 
     suite("listBots")(
-      test("returns all forty-five bots as proto messages") {
+      test("returns all fifty-one bots as proto messages") {
         for resp <- svc.listBots(ListBotsRequest())
         yield
-          assertTrue(resp.bots.length == 45) &&
+          assertTrue(resp.bots.length == 51) &&
           assertTrue(resp.bots.head.id          == "bullet") &&
           assertTrue(resp.bots.head.name        == "Bullet") &&
           assertTrue(resp.bots.head.elo         == 1400) &&
@@ -84,5 +86,15 @@ object BotsServiceSpec extends ZIOSpecDefault:
 
     test("BotsServiceImpl.layer can be constructed") {
       assertTrue(BotsServiceImpl.layer != null)
+    },
+    test("BotsServiceImpl.layer materializes when its dependency is provided") {
+      val program =
+        ZIO.serviceWithZIO[BotsServiceImpl](_.listBots(ListBotsRequest()))
+      for resp <- program.provide(
+                    BotsServiceImpl.layer,
+                    maichess.engine.service.EngineServiceLive.layer,
+                    zio.ZLayer.succeed(TablebaseClient.noop),
+                  )
+      yield assertTrue(resp.bots.length == 51)
     },
   )

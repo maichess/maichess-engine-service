@@ -1,12 +1,13 @@
 package maichess.engine.service
 
-import zio.{IO, UIO, ULayer, ZIO, ZLayer}
+import zio.{IO, UIO, ZIO, ZLayer}
 import zio.stream.ZStream
 import maichess.engine.chess.{Move, Position, Search, SearchV2, SearchV3, SearchV4}
 import maichess.engine.chess.basic.{BasicPosition, BasicSearch}
 import maichess.engine.domain.{AnalysisUpdate, BotConfig, BotRegistry, EngineVariant, PrincipalVariation}
+import maichess.engine.service.clients.TablebaseClient
 
-final class EngineServiceLive extends EngineService:
+final class EngineServiceLive(tablebaseClient: TablebaseClient) extends EngineService:
 
   private val MaxPvLength = 15
 
@@ -79,6 +80,12 @@ final class EngineServiceLive extends EngineService:
           _             <- ZIO.fail(s"No legal moves in position: $fen").when(move == Move.None)
         yield (Move.toUci(move), score)
 
+      case EngineVariant.Knowledge =>
+        for
+          pos    <- ZIO.fromEither(Position.fromFen(fen))
+          result <- new SearchV5(tablebaseClient).bestMove(pos, fen, moveTimeMs)
+        yield result
+
       case _ =>
         for
           pos           <- ZIO.fromEither(Position.fromFen(fen))
@@ -109,5 +116,6 @@ final class EngineServiceLive extends EngineService:
 
 // $COVERAGE-OFF$ ZLayer wiring — only used in Main, not in unit tests
 object EngineServiceLive:
-  val layer: ULayer[EngineService] = ZLayer.succeed(new EngineServiceLive)
+  val layer: ZLayer[TablebaseClient, Nothing, EngineService] =
+    ZLayer.fromFunction(new EngineServiceLive(_))
 // $COVERAGE-ON$
