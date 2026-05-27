@@ -121,6 +121,15 @@ Performance-critical code (`BB`, inline methods, `Position` hot path, `Search`/`
 - Integration-test the gRPC handler via the ZIO gRPC test harness, not a live socket.
 - Do not change tests to make them pass — only change tests when the requirement they cover changes.
 
+### Mutation testing
+
+Stryker4s is wired up as an sbt plugin. Config lives in `stryker4s.conf`;
+mutation exclusions mirror scoverage (`Main`, `TablebaseClientLive`, and the
+top-level `chess/` files — `chess/basic/` is still mutated). Run with
+`sbt stryker` from the service root. See `README.md` for details. Mutation
+testing is not required on every change, but use it when investigating
+whether tests genuinely exercise behaviour.
+
 ## Bot definitions
 
 `BotRegistry.all` is the authoritative list (currently **36 bots** — keep the count assertions in the specs in sync when this changes). Bots come in three "speed" tiers (bullet ≈ 100 ms, blitz ≈ 1 s, classical ≈ 5 s) crossed with three timing strategies (`Fixed`, `Proportional` → `…_proportional`/`…_prop`, `Aggressive` → `…_aggressive`/`…_aggr`), per engine variant:
