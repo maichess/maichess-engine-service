@@ -2,6 +2,7 @@ ThisBuild / version      := "0.1.0-SNAPSHOT"
 ThisBuild / scalaVersion := "3.8.3"
 
 val zioVersion     = "2.1.25"
+val zioKafkaVersion = "2.12.0"
 val zioGrpcVersion = "0.6.3"
 val grpcVersion    = "1.80.0"
 val scalapbVersion = "0.11.17"
@@ -25,9 +26,10 @@ lazy val root = (project in file("."))
 
     // ── Dependencies ──────────────────────────────────────────────────────────
     libraryDependencies ++= Seq(
-      "io.github.maichess"            %% "platform-protos"                    % "0.4.0",
+      "io.github.maichess"            %% "platform-protos"                    % "0.6.0",
       "dev.zio"                       %% "zio"                                % zioVersion,
       "dev.zio"                       %% "zio-streams"                        % zioVersion,
+      "dev.zio"                       %% "zio-kafka"                          % zioKafkaVersion,
       "io.grpc"                        % "grpc-netty-shaded"                  % grpcVersion,
       "com.thesamet.scalapb"          %% "scalapb-runtime-grpc"               % scalapbVersion,
       "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"                      % zioGrpcVersion,
