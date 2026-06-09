@@ -13,10 +13,11 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider
 import io.opentelemetry.sdk.trace.`export`.BatchSpanProcessor
 import io.opentelemetry.semconv.ServiceAttributes
 import scala.concurrent.Future
-import zio.{Runtime, Unsafe, ZIO, ZIOAppDefault}
+import zio.{Duration, Runtime, Schedule, Unsafe, ZIO, ZIOAppDefault}
 import maichess.engine.chess.{Position, Search}
 import maichess.engine.grpc.BotsServiceImpl
-import maichess.engine.service.EngineServiceLive
+import maichess.engine.kafka.EngineStream
+import maichess.engine.service.{EngineService, EngineServiceLive}
 import maichess.engine.service.clients.TablebaseClientLive
 import maichess.engine.v1.bots.bots.{
   AnalysisUpdate    => ProtoAnalysisUpdate,
@@ -36,6 +37,25 @@ object Main extends ZIOAppDefault:
 
   private val otlpEndpoint: String =
     sys.env.getOrElse("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
+
+  // The bot-move stream processor is opt-in (KAFKA_ENABLED=true in staging); off in
+  // prod where Kafka is not deployed, so the service runs as a pure gRPC query server.
+  private val kafkaEnabled: Boolean =
+    sys.env.get("KAFKA_ENABLED").exists(_.equalsIgnoreCase("true"))
+
+  private val kafkaBootstrap: List[String] =
+    sys.env.getOrElse("KAFKA_BOOTSTRAP", "kafka:9092").split(',').map(_.trim).toList
+
+  // Runs concurrently with the gRPC server. Retries forever so a transient broker
+  // outage never takes down the query path; ZIO.never when Kafka is disabled.
+  private val kafkaWork: ZIO[EngineService, Nothing, Unit] =
+    if kafkaEnabled then
+      EngineStream
+        .run(kafkaBootstrap)
+        .tapErrorCause(cause => ZIO.logErrorCause("engine stream failed; retrying", cause))
+        .retry(Schedule.spaced(Duration.fromSeconds(5)))
+        .ignore
+    else ZIO.never
 
   // Force one-time engine initialisation (magic-bitboard / attack-table generation)
   // and JIT warm-up of the search hot path before the server accepts traffic, so
@@ -71,7 +91,7 @@ object Main extends ZIOAppDefault:
           ZIO.acquireReleaseWith(
             ZIO.attempt(startServer(svc, runtime, grpcTelemetry.newServerInterceptor()))
           )(s => ZIO.attempt(s.shutdown()).orDie) { _ =>
-            ZIO.logInfo(s"gRPC server listening on port $port") *> ZIO.never
+            ZIO.logInfo(s"gRPC server listening on port $port") *> kafkaWork
           }
         }
       }.provide(BotsServiceImpl.layer, EngineServiceLive.layer, TablebaseClientLive.layer)

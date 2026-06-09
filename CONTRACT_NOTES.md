@@ -10,18 +10,16 @@ schemas are Avro in `maichess-api-contracts/events/v1/`.
 - Consumes `match.events.v1` `BotMoveRequested{fen, bot_id, time_limit_ms, request_id}` →
   produces `match.events.v1` `BotMoveCalculated{move_uci, evaluation_cp, request_id}`.
   `GetBestMove` is nondeterministic (time-limited), so it **dedupes on `request_id`** to stay
-  idempotent under at-least-once redelivery.
+  idempotent under at-least-once redelivery. **Implemented — Kafka task `04`, see below.**
 - Consumes `analysis.commands.v1` `StartAnalysis`/`StopAnalysis` → streams
   `analysis.events.v1` `AnalysisDepthCompleted` per depth, then `AnalysisCompleted`.
   Cancellation arrives as `StopAnalysis` keyed by `session_id` (replaces gRPC stream cancel;
-  loses native backpressure — accepted trade).
+  loses native backpressure — accepted trade). Still planned — Kafka task `07`.
 
 **Keeps (synchronous gRPC):** `ListBots` (a read).
 
 **Eventually retired:** the `Bots.GetBestMove` and `Bots.AnalyzePosition` gRPC RPCs, once
-match-loop and analysis are fully on Kafka.
-
-Not yet implemented in code — Phase 0 lands the ADR, Avro schemas, and Kafka infra only.
+match-loop and analysis are fully on Kafka (task `09`).
 
 ## Protobuf event serde — implemented (Kafka task `01`)
 
@@ -43,3 +41,31 @@ Contracts **v0.6.0** is published; `io.github.maichess:platform-protos` is pinne
 **Local verify pending (auth handoff):** a fresh agent shell has no `GITHUB_TOKEN`, so `sbt` cannot
 resolve `platform-protos@0.6.0` from GitHub Packages (401). Run `sbt test` where the token is
 available to confirm.
+
+## Bot-move stream processor — implemented (Kafka task `04`)
+
+The engine is now a **stream processor** for bot moves (no contract change beyond task `01`):
+
+1. `kafka/BotMoveProcessor.scala` — the pure decision + dedupe logic. Maps a consumed
+   `match.events.v1` `MatchEvent` to the `BotMoveCalculated` to emit: only `BotMoveRequested`
+   is acted on (every other payload, including the engine's own `BotMoveCalculated`, yields
+   `None`); reuses `EngineService.bestMove` unchanged for the search. Envelope: copies
+   `aggregate_id` (matchId) and `correlation_id`, sets `causation_id = BotMoveRequested.event_id`,
+   `sequence = source.sequence + 1`, `producer = "engine-service"`,
+   `event_type = "match.BotMoveCalculated"`. A search failure (unknown bot / bad FEN) is logged
+   and dropped (no event) rather than failing the stream.
+   **Dedupe:** bot-move calc is nondeterministic, so a `request_id` seen-set (bounded, FIFO
+   eviction, `Ref`-held) is the idempotency guard — a redelivered `request_id` yields `None`.
+   Fully unit-tested (`BotMoveProcessorSpec`), covered, and mutated.
+2. `kafka/EngineStream.scala` — the live-Kafka I/O shell (consume `match.events.v1` → run the
+   processor → produce `BotMoveCalculated` back to `match.events.v1`, commit offsets). Unlike the
+   move-validator (Kafka transaction for effectively-once), the engine relies on the `request_id`
+   dedupe; offsets commit after the produce. Excluded from coverage (`build.sbt`
+   `coverageExcludedFiles`) and mutation (`stryker4s.conf`), like the platform's other Kafka shells.
+3. `Main.scala` — runs `EngineStream` concurrently with the gRPC server when `KAFKA_ENABLED=true`
+   (staging only; prod has no Kafka, so the service stays a pure gRPC query server). Retries
+   forever on broker outage so the query path never goes down. `ListBots`/`GetBestMove` gRPC
+   unchanged (`GetBestMove` is retired later in task `09`).
+
+`sbt test` is green (210 tests) at **100% statement + branch coverage** with the local
+`platform-protos@0.6.0` already in the coursier cache.

@@ -56,7 +56,8 @@ lazy val root = (project in file("."))
     coverageEnabled          := true,
     coverageMinimumStmtTotal := 100,
     coverageFailOnMinimum    := true,
-    coverageExcludedFiles    := ".*Main.*|.*TablebaseClientLive.*",
+    // EngineStream = live-Kafka I/O shell (the pure BotMoveProcessor it drives is covered).
+    coverageExcludedFiles    := ".*Main.*|.*TablebaseClientLive.*|.*EngineStream.*",
     // chess/ is excluded (timing-dependent branches) but chess/basic/ is NOT — it has 100% coverage.
     coverageExcludedPackages := "maichess\\.engine\\.chess\\.(?!basic\\.).*",
 
