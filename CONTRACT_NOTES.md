@@ -23,21 +23,23 @@ match-loop and analysis are fully on Kafka.
 
 Not yet implemented in code — Phase 0 lands the ADR, Avro schemas, and Kafka infra only.
 
-## Protobuf event serde — pending v0.6.0 publish (Kafka task `01`)
+## Protobuf event serde — implemented (Kafka task `01`)
 
 The event schemas are now **Protobuf**, not Avro: `maichess-api-contracts/protos/events/v1/`
 (`match_events.proto`, `analysis_commands.proto`, `analysis_events.proto`, all package
 `maichess.events.v1`). They mirror the `events/v1/*.avsc` field-for-field; the `.avsc` files stay
 in place until each topic cuts over (task `02`).
 
-**Blocked on the contracts publish** (publish-first — see
-[serialization-protobuf-migration.md](../../maichess-knowledge-base/knowledge/architecture/serialization-protobuf-migration.md)):
+Contracts **v0.6.0** is published; `io.github.maichess:platform-protos` is pinned at `0.6.0` in
+`build.sbt`. Done:
 
-1. The user tags/pushes contracts **v0.6.0** so the generated `maichess.events.v1` types ship in
-   `platform-protos`. A fresh agent shell cannot restore the just-published version.
-2. Bump `io.github.maichess:platform-protos` in `build.sbt` from `0.4.0` → `0.6.0`.
-3. Add a zio-kafka **Protobuf serde** over the ScalaPB-generated `maichess.events.v1` types
-   (`MatchEvent`, `AnalysisCommand`, `AnalysisEvent`) — Confluent Protobuf serde + Schema Registry
-   during the transition. Serde plumbing only; **no producer/consumer is switched in task `01`.**
+1. `src/main/scala/maichess/engine/kafka/ProtobufEventSerdes.scala` — a generic zio-kafka `Serde`
+   over any ScalaPB companion (raw Protobuf bytes; the end-state encoding once the registry is
+   removed in task `09`). Serde plumbing only; **no producer/consumer is wired in task `01`** — the
+   stream processors land in tasks `04` (bot moves) / `07` (analysis).
+2. `src/test/scala/maichess/engine/kafka/ProtobufEventSerdesSpec.scala` — round-trips every payload
+   variant the engine handles across `MatchEvent` (bot moves), `AnalysisCommand`, `AnalysisEvent`.
 
-Cannot compile or test until step 1–2 land.
+**Local verify pending (auth handoff):** a fresh agent shell has no `GITHUB_TOKEN`, so `sbt` cannot
+resolve `platform-protos@0.6.0` from GitHub Packages (401). Run `sbt test` where the token is
+available to confirm.
