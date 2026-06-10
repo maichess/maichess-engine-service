@@ -16,7 +16,7 @@ import scala.concurrent.Future
 import zio.{Duration, Runtime, Schedule, Unsafe, ZIO, ZIOAppDefault}
 import maichess.engine.chess.{Position, Search}
 import maichess.engine.grpc.BotsServiceImpl
-import maichess.engine.kafka.{AnalysisCommandStream, EngineMoveStream}
+import maichess.engine.kafka.{AnalysisCommandStream, EngineStream}
 import maichess.engine.service.{EngineService, EngineServiceLive}
 import maichess.engine.service.clients.TablebaseClientLive
 import maichess.engine.v1.bots.bots.{
@@ -38,8 +38,8 @@ object Main extends ZIOAppDefault:
   private val otlpEndpoint: String =
     sys.env.getOrElse("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
 
-  // The bot-move stream processor is opt-in (KAFKA_ENABLED=true in staging); off
-  // in prod where Kafka is not deployed, so the service runs as a pure gRPC server.
+  // The stream processors are opt-in (KAFKA_ENABLED=true in staging); off in prod
+  // where Kafka is not deployed, so the service runs as a pure gRPC query server.
   private val kafkaEnabled: Boolean =
     sys.env.get("KAFKA_ENABLED").exists(_.equalsIgnoreCase("true"))
 
@@ -62,7 +62,7 @@ object Main extends ZIOAppDefault:
   // when Kafka is disabled (prod), so the service runs as a pure gRPC server.
   private val kafkaWork: ZIO[EngineService, Nothing, Unit] =
     if kafkaEnabled then
-      streamWork("engine bot-move stream", EngineMoveStream.run(kafkaBootstrap))
+      streamWork("engine bot-move stream", EngineStream.run(kafkaBootstrap))
         .zipPar(streamWork("engine analysis stream", AnalysisCommandStream.run(kafkaBootstrap)))
         .unit
     else ZIO.never

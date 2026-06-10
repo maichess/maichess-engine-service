@@ -10,26 +10,20 @@ import zio.kafka.serde.Serde
 import zio.stream.ZStream
 
 // I/O wiring for the engine bot-move stream processor. Excluded from coverage and
-// mutation, like the other live-Kafka shells in the platform: the decision and
-// dedupe logic lives in the pure, fully-tested BotMoveProcessor / BoundedSet;
-// this file only moves bytes. It consumes match.events.v1, runs the processor on
-// each BotMoveRequested, and produces the resulting BotMoveCalculated back to
-// match.events.v1.
+// mutation, like the platform's other live-Kafka shells: the decision + dedupe logic
+// lives in the pure, fully-tested BotMoveProcessor; this file only moves bytes.
 //
-// Unlike the move-validator (which is pure and uses a Kafka transaction for
-// effectively-once), the engine is nondeterministic and instead guards on
-// request_id (BoundedSet). Delivery is at-least-once: produce, then commit the
-// offset batch; a crash between the two redelivers the request, and the dedupe
-// drops it. Records the engine ignores still have their offset committed so the
-// consumer advances without re-reading them.
-object EngineMoveStream:
+// It consumes match.events.v1, runs the processor on each BotMoveRequested, and
+// produces the resulting BotMoveCalculated back to match.events.v1. Unlike the
+// move-validator (which wraps its consume->produce in a Kafka transaction for
+// effectively-once), the engine relies on the processor's request_id dedupe for
+// idempotency: calculation is nondeterministic, so reprocessing is unsafe regardless
+// of transaction boundaries. Offsets are committed after the produce, so at-least-once
+// redelivery is bounded by the seen-set.
+object EngineStream:
 
   val Topic   = "match.events.v1"
   val GroupId = "engine"
-
-  // The in-memory dedupe guard only spans the redelivery window, so a few
-  // thousand recent request ids is ample; downstream (the projector) dedupes too.
-  private val SeenCapacity = 10_000
 
   private val valueSerde: Serde[Any, MatchEvent] = ProtobufEventSerdes.serde(MatchEvent)
 
@@ -40,17 +34,17 @@ object EngineMoveStream:
       bootstrap: List[String],
   ): ZIO[EngineService & Scope, Throwable, ZStream[Any, Throwable, Unit]] =
     for
-      engine   <- ZIO.service[EngineService]
-      seen     <- Ref.make(BoundedSet.empty(SeenCapacity))
-      consumer <- Consumer.make(consumerSettings(bootstrap))
-      producer <- Producer.make(producerSettings(bootstrap))
-    yield stream(consumer, producer, BotMoveProcessor(engine, seen))
+      engine    <- ZIO.service[EngineService]
+      processor <- BotMoveProcessor.make(engine)
+      consumer  <- Consumer.make(consumerSettings(bootstrap))
+      producer  <- Producer.make(ProducerSettings(bootstrap))
+    yield stream(consumer, producer, processor)
 
   private def consumerSettings(bootstrap: List[String]): ConsumerSettings =
-    ConsumerSettings(bootstrap).withGroupId(GroupId)
-
-  private def producerSettings(bootstrap: List[String]): ProducerSettings =
-    ProducerSettings(bootstrap)
+    ConsumerSettings(bootstrap)
+      .withGroupId(GroupId)
+      .withRebalanceSafeCommits(true)
+      .withMaxRebalanceDuration(30.seconds)
 
   private def stream(
       consumer: Consumer,
@@ -59,15 +53,14 @@ object EngineMoveStream:
   ): ZStream[Any, Throwable, Unit] =
     consumer
       .plainStream(Subscription.topics(Topic), Serde.string, valueSerde)
-      .mapChunksZIO(produceAndCommit(producer, processor))
+      .mapChunksZIO(process(producer, processor))
 
-  private def produceAndCommit(producer: Producer, processor: BotMoveProcessor)(
+  private def process(producer: Producer, processor: BotMoveProcessor)(
       chunk: Chunk[CommittableRecord[String, MatchEvent]],
   ): ZIO[Any, Throwable, Chunk[Unit]] =
     for
       outputs <- ZIO.foreach(chunk)(toOutput(processor))
-      records  = outputs.flatten
-      _       <- producer.produceChunk(records, Serde.string, valueSerde).when(records.nonEmpty)
+      _       <- ZIO.foreachDiscard(outputs.flatten)(producer.produce(_, Serde.string, valueSerde))
       _       <- OffsetBatch(chunk.map(_.offset)).commit
     yield Chunk.empty[Unit]
 
