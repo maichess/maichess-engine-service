@@ -6,7 +6,7 @@ import zio.test.*
 import maichess.engine.grpc.BotsServiceImpl
 import maichess.engine.service.EngineServiceLive
 import maichess.engine.service.clients.TablebaseClient
-import maichess.engine.v1.bots.bots.{AnalyzePositionRequest, GetBestMoveRequest, ListBotsRequest}
+import maichess.engine.v1.bots.bots.{AnalyzePositionRequest, ListBotsRequest}
 
 object BotsServiceSpec extends ZIOSpecDefault:
 
@@ -30,31 +30,6 @@ object BotsServiceSpec extends ZIOSpecDefault:
       test("all returned bots have a non-empty description") {
         for resp <- svc.listBots(ListBotsRequest())
         yield assertTrue(resp.bots.forall(_.description.nonEmpty))
-      },
-    ),
-
-    suite("getBestMove")(
-      test("returns a move and centipawn score without a time limit") {
-        val req = GetBestMoveRequest(fen = startFen, botId = "bullet")
-        for resp <- svc.getBestMove(req)
-        yield assertTrue(resp.move.length >= 4 && resp.move.length <= 5)
-      },
-      test("returns a move when a time limit is provided") {
-        val req = GetBestMoveRequest(fen = startFen, botId = "bullet_proportional", timeLimitMs = Some(30000))
-        for resp <- svc.getBestMove(req)
-        yield assertTrue(resp.move.length >= 4 && resp.move.length <= 5)
-      },
-      test("fails with INVALID_ARGUMENT for an unknown bot id") {
-        val req = GetBestMoveRequest(fen = startFen, botId = "unknown")
-        for status <- svc.getBestMove(req).flip
-        yield
-          assertTrue(status.getCode == Status.Code.INVALID_ARGUMENT) &&
-          assertTrue(status.getDescription.contains("Unknown bot: unknown"))
-      },
-      test("fails with INVALID_ARGUMENT for an invalid FEN") {
-        val req = GetBestMoveRequest(fen = "garbage", botId = "bullet")
-        for status <- svc.getBestMove(req).flip
-        yield assertTrue(status.getCode == Status.Code.INVALID_ARGUMENT)
       },
     ),
 

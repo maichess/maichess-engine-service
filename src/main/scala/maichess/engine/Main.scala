@@ -23,8 +23,6 @@ import maichess.engine.v1.bots.bots.{
   AnalysisUpdate    => ProtoAnalysisUpdate,
   AnalyzePositionRequest,
   BotsGrpc,
-  GetBestMoveRequest,
-  GetBestMoveResponse,
   ListBotsRequest,
   ListBotsResponse,
 }
@@ -72,7 +70,7 @@ object Main extends ZIOAppDefault:
 
   // Force one-time engine initialisation (magic-bitboard / attack-table generation)
   // and JIT warm-up of the search hot path before the server accepts traffic, so
-  // the first GetBestMove request doesn't pay that cost mid-request.
+  // the first bot-move request doesn't pay that cost mid-request.
   private def warmUpEngine(): Unit =
     Position.fromFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
       .foreach(pos => new Search().bestMove(pos, 50L))
@@ -132,9 +130,6 @@ object Main extends ZIOAppDefault:
 
     private def run[A](effect: zio.IO[Throwable, A]): Future[A] =
       Unsafe.unsafe { implicit u => runtime.unsafe.runToFuture(effect) }
-
-    def getBestMove(request: GetBestMoveRequest): Future[GetBestMoveResponse] =
-      run(svc.getBestMove(request).mapError(_.asException()))
 
     def listBots(request: ListBotsRequest): Future[ListBotsResponse] =
       run(svc.listBots(request))

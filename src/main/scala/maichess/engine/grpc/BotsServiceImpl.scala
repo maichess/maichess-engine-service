@@ -10,18 +10,11 @@ import maichess.engine.v1.bots.bots.{
   PrincipalVariation => ProtoPv,
   AnalyzePositionRequest,
   Bot               => ProtoBot,
-  GetBestMoveRequest,
-  GetBestMoveResponse,
   ListBotsRequest,
   ListBotsResponse,
 }
 
 final class BotsServiceImpl(engine: EngineService):
-
-  def getBestMove(req: GetBestMoveRequest): IO[Status, GetBestMoveResponse] =
-    engine.bestMove(req.fen, req.botId, req.timeLimitMs.map(_.toLong))
-      .map { case (move, score) => GetBestMoveResponse(move = move, evaluationCp = score) }
-      .mapError(reason => Status.INVALID_ARGUMENT.withDescription(reason))
 
   def listBots(req: ListBotsRequest): UIO[ListBotsResponse] =
     engine.listBots.map(bots => ListBotsResponse(bots = bots.map(toProtoBot)))
