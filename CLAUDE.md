@@ -2,7 +2,13 @@
 
 ## Service responsibility
 
-Accepts a full game state (FEN) and a bot identifier, runs iterative-deepening alpha-beta search, and returns the best move in UCI notation plus a centipawn evaluation. Also enumerates available bots with metadata. Called exclusively by **Match Manager** over gRPC.
+Accepts a full game state (FEN) and a bot identifier, runs iterative-deepening alpha-beta search, and returns the best move in UCI notation plus a centipawn evaluation. Also enumerates available bots with metadata (`ListBots`) and streams multi-PV analysis (`AnalyzePosition`).
+
+Bot moves are **event-sourced** (Kafka task 09): native match moves flow over `match.events.v1`
+(`EngineStream` consumes `BotMoveRequested` → replies `BotMoveCalculated`), and external/tournament
+moves over the dedicated `engine.commands.v1` → `engine.events.v1` request/reply pair
+(`EngineCommandStream`). Both reuse the pure `BotMoveProcessor`. `ListBots`/`AnalyzePosition` are still
+gRPC (called by Match Manager, Analysis, Tournament Bridge).
 
 See `maichess-knowledge-base/maichess-structure.md` for architecture context.
 
@@ -15,7 +21,12 @@ maichess-api-contracts/protos/engine-service/v1/bots.proto
 ```
 
 Service: `maichess.engine.v1.Bots`
-RPCs: `GetBestMove`, `ListBots`
+RPCs: `ListBots`, `AnalyzePosition`
+
+> The `GetBestMove` RPC is removed from the proto in Kafka task 09 (bot moves are now event-sourced —
+> see above). Until the new `platform-protos` is published, the generated `BotsGrpc.Bots` trait still
+> declares `getBestMove`, so `BotsServiceImpl`/`Main` keep the override; see `CONTRACT_NOTES.md` for
+> the post-publish removal steps.
 
 Read the proto before touching any service logic. Do not infer the contract from implementation code.
 

@@ -16,7 +16,7 @@ import scala.concurrent.Future
 import zio.{Duration, Runtime, Schedule, Unsafe, ZIO, ZIOAppDefault}
 import maichess.engine.chess.{Position, Search}
 import maichess.engine.grpc.BotsServiceImpl
-import maichess.engine.kafka.{AnalysisCommandStream, EngineStream}
+import maichess.engine.kafka.{AnalysisCommandStream, EngineCommandStream, EngineStream}
 import maichess.engine.service.{EngineService, EngineServiceLive}
 import maichess.engine.service.clients.TablebaseClientLive
 import maichess.engine.v1.bots.bots.{
@@ -57,12 +57,15 @@ object Main extends ZIOAppDefault:
       .retry(Schedule.spaced(Duration.fromSeconds(5)))
       .ignore
 
-  // Runs concurrently with the gRPC server: the bot-move processor (match.events)
-  // and the analysis processor (analysis.commands → analysis.events). ZIO.never
-  // when Kafka is disabled (prod), so the service runs as a pure gRPC server.
+  // Runs concurrently with the gRPC server: the native bot-move processor
+  // (match.events), the external-game bot loop (engine.commands → engine.events,
+  // driving the tournament-bridge), and the analysis processor (analysis.commands →
+  // analysis.events). ZIO.never when Kafka is disabled (prod), so the service runs as
+  // a pure gRPC server.
   private val kafkaWork: ZIO[EngineService, Nothing, Unit] =
     if kafkaEnabled then
       streamWork("engine bot-move stream", EngineStream.run(kafkaBootstrap))
+        .zipPar(streamWork("engine command stream", EngineCommandStream.run(kafkaBootstrap)))
         .zipPar(streamWork("engine analysis stream", AnalysisCommandStream.run(kafkaBootstrap)))
         .unit
     else ZIO.never

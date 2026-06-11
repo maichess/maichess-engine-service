@@ -96,3 +96,27 @@ are retired later in task `09`.
 The build uses `sbt-dotenv`, which loads `GITHUB_TOKEN` from `.env`, so `sbt test` resolves
 `platform-protos@0.6.0` from GitHub Packages locally; `sbt clean coverage test coverageReport` is
 green at **100% statement + branch coverage**.
+
+---
+
+## Kafka task 09 — `Bots.GetBestMove` removed from `bots.proto` → PUBLISH HANDOFF (blocked)
+
+`engine-service/v1/bots.proto` now drops the `GetBestMove` RPC + `GetBestMoveRequest`/
+`GetBestMoveResponse` (`ListBots` and `AnalyzePosition` stay). Native bot moves are event-sourced
+on `match.events.v1`; external-game moves use the new `engine.commands.v1`/`engine.events.v1`
+request/reply pair, both served by the engine's Kafka stream processors (`EngineStream`,
+`EngineCommandStream`). `buf lint`/`build` pass; `buf breaking` reports the intended `GetBestMove`
+deletion only.
+
+**Blocked on a contract publish.** A fresh `sbt` shell cannot resolve a ScalaPB `BotsGrpc.Bots`
+trait without `getBestMove` until a new `platform-protos` version is published. The generated trait
+makes `getBestMove` abstract, so `grpc/BotsServiceImpl.scala` + the `Main.scala` `BotsAdapter` still
+implement it (and `BotsServiceSpec` still tests it) — they **must** stay until the regenerated stub
+lands, or the build won't compile.
+
+**Post-publish steps (do in this order):**
+1. User commits the proto change, tags `vX.Y.Z`, pushes (publishes `platform-protos`).
+2. Bump the `platform-protos` coordinate in `build.sbt` to the new version.
+3. Remove `getBestMove` from `grpc/BotsServiceImpl.scala`, the `BotsAdapter` in `Main.scala`, and
+   the `GetBestMove*` imports; delete the `getBestMove` cases from `BotsServiceSpec.scala`.
+4. `sbt clean coverage test coverageReport` green.
