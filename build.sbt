@@ -26,7 +26,7 @@ lazy val root = (project in file("."))
 
     // ── Dependencies ──────────────────────────────────────────────────────────
     libraryDependencies ++= Seq(
-      "io.github.maichess"            %% "platform-protos"                    % "0.8.0",
+      "io.github.maichess"            %% "platform-protos"                    % "0.9.0",
       "dev.zio"                       %% "zio"                                % zioVersion,
       "dev.zio"                       %% "zio-streams"                        % zioVersion,
       "dev.zio"                       %% "zio-kafka"                          % zioKafkaVersion,
