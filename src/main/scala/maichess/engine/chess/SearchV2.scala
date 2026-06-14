@@ -18,7 +18,7 @@ package maichess.engine.chess
 // Like Search, SearchV2 is a final class so each request gets its own
 // transposition table — no shared mutable state between concurrent searches.
 @SuppressWarnings(Array("org.wartremover.warts.Var", "org.wartremover.warts.Return", "org.wartremover.warts.DefaultArguments"))
-final class SearchV2:
+final class SearchV2 extends MultiPvSearch:
   private val INF     = 100000
   private val MATE    = 99000
   private val TT_SIZE = 1 << 20          // ~1M entries × 16 bytes = 16 MB

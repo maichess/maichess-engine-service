@@ -265,5 +265,21 @@ object EngineServiceSpec extends ZIOSpecDefault:
         for result <- svc.analyzePosition(startFen, "basic_bullet", 1).runCollect.exit
         yield assert(result)(fails(containsString("Analysis not supported")))
       },
+      test("dispatches multi-PV on variant: EnhancedSearch (search_*) analyses with SearchV2") {
+        for updates <- svc.analyzePosition(startFen, "search_bullet", 2).take(1).runCollect
+        yield assertTrue(updates.head.lines.nonEmpty && updates.head.lines.head.moves.nonEmpty)
+      },
+      test("dispatches multi-PV on variant: EnhancedOrdering (ordering_*) analyses with SearchV3") {
+        for updates <- svc.analyzePosition(startFen, "ordering_bullet", 2).take(1).runCollect
+        yield assertTrue(updates.head.lines.nonEmpty && updates.head.lines.head.moves.nonEmpty)
+      },
+      test("dispatches multi-PV on variant: EnhancedEval (eval_*) analyses with SearchV4") {
+        for updates <- svc.analyzePosition(startFen, "eval_bullet", 2).take(1).runCollect
+        yield assertTrue(updates.head.lines.nonEmpty && updates.head.lines.head.moves.nonEmpty)
+      },
+      test("dispatches multi-PV on variant: Knowledge (knowledge_*) analyses with SearchV4") {
+        for updates <- svc.analyzePosition(startFen, "knowledge_blitz", 2).take(1).runCollect
+        yield assertTrue(updates.head.lines.nonEmpty && updates.head.lines.head.moves.nonEmpty)
+      },
     ),
   )

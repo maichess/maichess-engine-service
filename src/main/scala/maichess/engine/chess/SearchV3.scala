@@ -22,7 +22,7 @@ package maichess.engine.chess
 // instance, so killers, history and the transposition table are never shared
 // between concurrent searches.
 @SuppressWarnings(Array("org.wartremover.warts.Var", "org.wartremover.warts.Return", "org.wartremover.warts.DefaultArguments"))
-final class SearchV3:
+final class SearchV3 extends MultiPvSearch:
   private val INF     = 100000
   private val MATE    = 99000
   private val TT_SIZE = 1 << 20

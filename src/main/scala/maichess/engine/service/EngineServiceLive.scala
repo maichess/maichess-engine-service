@@ -2,7 +2,7 @@ package maichess.engine.service
 
 import zio.{IO, UIO, ZIO, ZLayer}
 import zio.stream.ZStream
-import maichess.engine.chess.{Move, Position, Search, SearchV2, SearchV3, SearchV4}
+import maichess.engine.chess.{Move, MultiPvSearch, Position, Search, SearchV2, SearchV3, SearchV4}
 import maichess.engine.chess.basic.{BasicPosition, BasicSearch}
 import maichess.engine.domain.{AnalysisUpdate, BotConfig, BotRegistry, EngineVariant, PrincipalVariation}
 import maichess.engine.service.clients.TablebaseClient
@@ -27,12 +27,12 @@ final class EngineServiceLive(tablebaseClient: TablebaseClient) extends EngineSe
         config <- ZIO.fromOption(BotRegistry.find(botId)).orElseFail(s"Unknown bot: $botId")
         _      <- ZIO.fail(s"Analysis not supported for bot: $botId").when(config.variant == EngineVariant.Basic)
         pos    <- ZIO.fromEither(Position.fromFen(fen))
-      yield pos
+      yield (pos, config.variant)
 
-    ZStream.fromZIO(init).flatMap { pos =>
+    ZStream.fromZIO(init).flatMap { case (pos, variant) =>
       // Streams depths 1, 2, 3, … until two consecutive depths return the same result (stagnation).
       ZStream.unfoldZIO((1, Option.empty[AnalysisUpdate])) { case (depth, prev) =>
-        ZIO.attemptBlocking(searchMultiPv(pos, depth, lineCount))
+        ZIO.attemptBlocking(searchMultiPv(pos, depth, lineCount, variant))
           .mapError(e => s"Analysis failed at depth $depth: ${e.getMessage}")
           .map { lines =>
             val update = AnalysisUpdate(depth, lines)
@@ -95,18 +95,31 @@ final class EngineServiceLive(tablebaseClient: TablebaseClient) extends EngineSe
           _             <- ZIO.fail(s"No legal moves in position: $fen").when(move == Move.None)
         yield (Move.toUci(move), score)
 
-  private def searchMultiPv(pos: Position, depth: Int, lineCount: Int): List[PrincipalVariation] =
+  private def searchMultiPv(
+      pos: Position, depth: Int, lineCount: Int, variant: EngineVariant): List[PrincipalVariation] =
     @annotation.tailrec
     def go(rank: Int, excl: List[Int], acc: List[PrincipalVariation]): List[PrincipalVariation] =
       if rank > lineCount then acc.reverse
       else
-        val search        = new Search()
+        val search        = newMultiPvSearch(variant)
         val (move, score) = search.bestMoveAtDepth(pos, depth, excl.toArray)
         if move == Move.None then acc.reverse
         else
           val pv = search.extractPv(pos, MaxPvLength)
           go(rank + 1, move :: excl, PrincipalVariation(rank, score, pv.map(Move.toUci)) :: acc)
     go(1, Nil, Nil)
+
+  // Multi-PV analysis dispatches on the bot's engine variant, so a stronger bot
+  // analyses with its own search + eval rather than the tier-1 Search for everyone.
+  // The Knowledge tier (book + tablebase) has no multi-line analogue for those
+  // oracles, so it analyses with its underlying SearchV4 evaluator (same as
+  // EnhancedEval). Basic is rejected before analysis starts, so it never reaches here.
+  private def newMultiPvSearch(variant: EngineVariant): MultiPvSearch =
+    variant match
+      case EngineVariant.EnhancedSearch                  => new SearchV2()
+      case EngineVariant.EnhancedOrdering                => new SearchV3()
+      case EngineVariant.EnhancedEval | EngineVariant.Knowledge => new SearchV4()
+      case _                                             => new Search()
 
   private def stagnated(current: AnalysisUpdate, prev: Option[AnalysisUpdate]): Boolean =
     prev.exists { p =>
