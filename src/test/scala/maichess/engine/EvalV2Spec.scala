@@ -12,14 +12,16 @@ object EvalV2Spec extends ZIOSpecDefault:
 
   def spec = suite("EvalV2")(
 
-    test("starting position evaluates to exactly 0 (mirror symmetry)") {
+    test("starting position evaluates to the tempo bonus only (mirror symmetry)") {
+      // The board is mirror-symmetric, so every positional term cancels; the only
+      // residue is the side-to-move tempo bonus (10).
       for pos <- fen(startFen)
-      yield assertTrue(EvalV2.evaluate(pos) == 0)
+      yield assertTrue(EvalV2.evaluate(pos) == 10)
     },
 
-    test("symmetric mirrored positions evaluate to 0") {
+    test("symmetric mirrored positions evaluate to the tempo bonus only") {
       for pos <- fen("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1")
-      yield assertTrue(EvalV2.evaluate(pos) == 0)
+      yield assertTrue(EvalV2.evaluate(pos) == 10)
     },
 
     test("returns negative when down material") {
@@ -87,11 +89,56 @@ object EvalV2Spec extends ZIOSpecDefault:
       yield assertTrue(EvalV2.evaluate(openF) > EvalV2.evaluate(blocked))
     },
 
-    test("evaluation is from side-to-move perspective") {
-      // The same position with the side-to-move flipped should negate the score.
+    test("evaluation is from side-to-move perspective (antisymmetric modulo tempo)") {
+      // Every positional term flips sign with the side to move; only the constant
+      // tempo bonus does not. So the two scores sum to twice the tempo bonus (20),
+      // rather than negating exactly.
       for
         whiteToMove <- fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1")
         blackToMove <- fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR b KQkq - 0 1")
-      yield assertTrue(EvalV2.evaluate(whiteToMove) == -EvalV2.evaluate(blackToMove))
+      yield assertTrue(EvalV2.evaluate(whiteToMove) + EvalV2.evaluate(blackToMove) == 20)
+    },
+
+    test("bishop pair: the side holding both bishops is favoured (equal material)") {
+      // Equal material (2 minors a side) mirrored across the board: in `whitePair`
+      // White has both bishops vs Black's two knights; `blackPair` is the colour
+      // mirror. The bishop-pair holder is preferred in both, so the score is
+      // positive for White in the first and negative in the second.
+      for
+        whitePair <- fen("1n2k1n1/8/8/8/8/8/8/2B1K1B1 w - - 0 1")
+        blackPair <- fen("2b1k1b1/8/8/8/8/8/8/1N2K1N1 w - - 0 1")
+      yield assertTrue(EvalV2.evaluate(whitePair) > 0) && assertTrue(EvalV2.evaluate(blackPair) < 0)
+    },
+
+    test("knight mobility excludes squares occupied by own pieces") {
+      // Both positions: a knight on d4 plus one passed, isolated white pawn. The
+      // pawn squares c6 and f6 share PawnPst (20), passed-rank bonus (rank 5) and
+      // isolated penalty, so every eval term is identical EXCEPT knight mobility:
+      // c6 is a knight target of d4 (its square is masked away as own-occupied),
+      // f6 is not. The open-knight position must therefore score strictly higher.
+      for
+        blocked <- fen("4k3/8/2P5/8/3N4/8/8/4K3 w - - 0 1")
+        openN   <- fen("4k3/8/5P2/8/3N4/8/8/4K3 w - - 0 1")
+      yield assertTrue(EvalV2.evaluate(openN) > EvalV2.evaluate(blocked))
+    },
+
+    test("outpost: a pawn-protected knight on a safe advanced square scores higher") {
+      // Both: a white knight on d5 plus one passed, isolated white pawn (c4 vs a4,
+      // same PawnPst and passed/isolated terms). With the pawn on c4 the knight is
+      // defended and unreachable by an enemy pawn — an outpost; on a4 it is not.
+      for
+        outpost   <- fen("4k3/8/8/3N4/2P5/8/8/4K3 w - - 0 1")
+        noOutpost <- fen("4k3/8/8/3N4/P7/8/8/4K3 w - - 0 1")
+      yield assertTrue(EvalV2.evaluate(outpost) > EvalV2.evaluate(noOutpost))
+    },
+
+    test("threat: a piece attacked by an enemy pawn is penalised") {
+      // Both: a white knight on d5 plus one black pawn on rank 6 (c6 vs f6, same
+      // PawnPst, passed and isolated terms, same knight mobility). The c6 pawn
+      // attacks d5; the f6 pawn does not. The threatened knight must score lower.
+      for
+        threatened <- fen("4k3/8/2p5/3N4/8/8/8/4K3 w - - 0 1")
+        safe       <- fen("4k3/8/5p2/3N4/8/8/8/4K3 w - - 0 1")
+      yield assertTrue(EvalV2.evaluate(threatened) < EvalV2.evaluate(safe))
     },
   )

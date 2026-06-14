@@ -91,7 +91,51 @@ object SearchV4Spec extends ZIOSpecDefault:
         assertTrue(m != Move.None)
     },
 
+    suite("draw detection")(
+      test("50-move rule: a winning material edge is a draw at the clock limit") {
+        // White is up a whole queen (Qa1) but the half-move clock is already 100,
+        // and White has no pawn move or capture available — so every legal move
+        // pushes the clock past the limit and the search scores a draw. There is
+        // no mate in one (lone queen, distant king), so the verdict is ~0.
+        val drawnFen = "6k1/8/8/8/8/8/8/Q5K1 w - - 100 80"
+        for pos <- fen(drawnFen)
+        yield
+          val (mv, score) = new SearchV4().bestMove(pos, 500L)
+          assertTrue(mv != Move.None) && assertTrue(iabs(score) < 100)
+      },
+      test("contrast: the same material edge wins with a fresh half-move clock") {
+        // Identical position, clock reset to 0 — now the queen is a winning edge,
+        // proving the draw above came from the 50-move rule, not the position.
+        val winningFen = "6k1/8/8/8/8/8/8/Q5K1 w - - 0 80"
+        for pos <- fen(winningFen)
+        yield
+          val (mv, score) = new SearchV4().bestMove(pos, 1000L)
+          assertTrue(mv != Move.None) && assertTrue(score > 500)
+      },
+      test("repetition: the worse side holds a draw by perpetual check") {
+        // White is down a rook for two pawns, but Qh5 has a forced perpetual:
+        // Qe8+ Kh7, Qh5+ Kg8, … shuffles the black king while Black's queen (a2)
+        // and rook (a3) can never reach a checking square to interpose or capture.
+        // With repetition scoring as a draw, White's best line is the perpetual,
+        // so the verdict is ~0 rather than the ~-300 material deficit.
+        val perpetualFen = "6k1/6p1/8/7Q/8/r7/q4PPP/6K1 w - - 0 1"
+        for pos <- fen(perpetualFen)
+        yield
+          val (mv, score) = new SearchV4().bestMove(pos, 2000L)
+          assertTrue(mv != Move.None) && assertTrue(iabs(score) < 100)
+      },
+    ),
+
     suite("bestMoveAtDepth / extractPv")(
+      test("analysis mode (bestMoveAtDepth) still finds a mate in 1") {
+        // bestMoveAtDepth runs with NMP and LMR disabled (analysis mode); the
+        // tactical verdict must be unaffected.
+        for pos <- fen(mateIn1Fen)
+        yield
+          val search      = new SearchV4()
+          val (mv, score) = search.bestMoveAtDepth(pos, 5, Array.empty[Int])
+          assertTrue(Move.toUci(mv) == "a1a8") && assertTrue(score > 90000)
+      },
       test("bestMoveAtDepth returns a legal root move and extractPv starts with it") {
         for pos <- fen(startFen)
         yield

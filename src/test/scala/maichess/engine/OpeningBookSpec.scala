@@ -28,6 +28,17 @@ object OpeningBookSpec extends ZIOSpecDefault:
   private def encodeMove(from: Int, to: Int, promo: Int): Int =
     (promo << 12) | (from << 6) | to
 
+  // Build a multi-entry book buffer (all sharing one key) from (moveBits, weight) pairs.
+  private def multiEntryBuffer(key: Long, entries: List[(Int, Int)]): ByteBuffer =
+    val buf = ByteBuffer.allocate(16 * entries.length)
+    entries.zipWithIndex.foreach { case ((moveBits, weight), i) =>
+      buf.putLong(i * 16, key)
+      buf.putShort(i * 16 + 8, moveBits.toShort)
+      buf.putShort(i * 16 + 10, weight.toShort)
+      buf.putInt(i * 16 + 12, 0)
+    }
+    buf
+
   def spec = suite("OpeningBook")(
 
     test("probing the starting position returns either a legal UCI move or None") {
@@ -80,6 +91,19 @@ object OpeningBookSpec extends ZIOSpecDefault:
         // Polyglot encodes white O-O as e1h1: from=4 (e1), to=7 (h1).
         val buf = oneEntryBuffer(key = key, moveBits = encodeMove(4, 7, 0), weight = 100)
         assertTrue(OpeningBook.probeBuffer(pos, buf) == Some("e1g1"))
+    },
+
+    test("probeBuffer deterministically picks the highest-weight move (strongest play)") {
+      // Two book moves for the start position: a low-weight e2e4 and a high-weight
+      // d2d4. Max-strength selection always returns the heavier-weighted move.
+      for pos <- fen(startFen)
+      yield
+        val key = PolyglotZobrist.key(pos)
+        val buf = multiEntryBuffer(key, List(
+          (encodeMove(12, 28, 0), 10),    // e2e4, weight 10
+          (encodeMove(11, 27, 0), 100),   // d2d4, weight 100
+        ))
+        assertTrue(OpeningBook.probeBuffer(pos, buf) == Some("d2d4"))
     },
 
     test("probeBuffer returns None for a position whose decoded move references an empty square") {

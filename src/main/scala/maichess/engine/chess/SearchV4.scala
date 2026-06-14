@@ -11,6 +11,10 @@ package maichess.engine.chess
 final class SearchV4 extends MultiPvSearch:
   private val INF     = 100000
   private val MATE    = 99000
+  // Any |score| at or above this is a checkmate score (MATE - ply, ply ≤ 127).
+  // Used to ply-adjust mate scores across the transposition table so a mate's
+  // distance stays correct regardless of the ply it is stored at / probed from.
+  private val MateBound = MATE - 256
   private val TT_SIZE = 1 << 20
   private val TT_MASK = (TT_SIZE - 1).toLong
   private val EXACT = 0; private val LOWER = 1; private val UPPER = 2
@@ -34,6 +38,24 @@ final class SearchV4 extends MultiPvSearch:
   private var nodes     = 0
   private var excluded  = Array.empty[Int]
 
+  // Hash of the position at each ply on the current search path, for in-search
+  // repetition detection. Only positions reachable without a pawn move or capture
+  // can repeat, so the scan is bounded by the half-move clock.
+  private val pathHist = new Array[Long](128)
+
+  // True while serving multi-PV analysis (bestMoveAtDepth): null-move pruning and
+  // late-move reductions are disabled so the score of every line — not just the
+  // best move — is a faithful evaluation rather than a fast lower bound.
+  private var analysisMode = false
+
+  // Ply-adjust mate scores entering / leaving the transposition table: a mate is
+  // stored relative to the node it was found at, then re-based to the probing ply.
+  private inline def toTT(sc: Int, ply: Int): Int =
+    if sc >= MateBound then sc + ply else if sc <= -MateBound then sc - ply else sc
+
+  private inline def fromTT(sc: Int, ply: Int): Int =
+    if sc >= MateBound then sc - ply else if sc <= -MateBound then sc + ply else sc
+
   private inline def isExcluded(mv: Int): Boolean =
     var i = 0; var found = false
     while i < excluded.length && !found do
@@ -45,6 +67,7 @@ final class SearchV4 extends MultiPvSearch:
 
   def bestMove(pos: Position, timeLimitMs: Long): (Int, Int) =
     val start = System.currentTimeMillis()
+    analysisMode = false
     nodes     = 0
     rootScore = 0
     val initCnt = MoveGen.generate(pos, moveBuf(0))
@@ -99,7 +122,23 @@ final class SearchV4 extends MultiPvSearch:
     if ply >= 127 then return quiesce(pos, aIn, beta, ply)
 
     val inCheck = LegalCheck.isInCheck(pos, pos.sideToMove)
-    val d       = if inCheck && ply < MaxExtPly then depth + 1 else depth
+
+    // Draw detection (path-dependent, so never stored in the TT). A position that
+    // repeats along the current search path scores as an immediate draw — a
+    // repeated position cannot itself be checkmate. The 50-move rule also scores
+    // as a draw, but not while in check: that node could be a checkmate, which
+    // takes precedence over the clock. Only the search-created repetitions are
+    // caught (the engine is handed a bare FEN with no prior game history) — enough
+    // to stop it repeating in a won position or to claim a perpetual when worse.
+    if ply > 0 then
+      if pos.halfMoveClock >= 100 && !inCheck then return 0
+      var j = ply - 2; var back = 2
+      while j >= 0 && back <= pos.halfMoveClock do
+        if pathHist(j) == pos.hash then return 0
+        j -= 2; back += 2
+    pathHist(ply) = pos.hash
+
+    val d = if inCheck && ply < MaxExtPly then depth + 1 else depth
     if d <= 0 then return quiesce(pos, aIn, beta, ply)
 
     val idx  = (pos.hash & TT_MASK).toInt
@@ -109,7 +148,7 @@ final class SearchV4 extends MultiPvSearch:
       ttMv = (tdat & 0xFFFF).toInt
       val td = ((tdat >> 38) & 63).toInt
       if td >= d then
-        val ts = (((tdat >> 16) & 0xFFFFF) - 500000).toInt
+        val ts = fromTT((((tdat >> 16) & 0xFFFFF) - 500000).toInt, ply)
         val tf = ((tdat >> 36) & 3).toInt
         if tf == EXACT then
           if ply == 0 && LegalCheck.isLegal(pos, ttMv) then
@@ -118,7 +157,7 @@ final class SearchV4 extends MultiPvSearch:
         if tf == LOWER && ts >= beta then return ts
         if tf == UPPER && ts <= aIn  then return ts
 
-    if d >= 3 && !inCheck && ply > 0 && !wasNullMove && hasNonPawnMaterial(pos, pos.sideToMove) then
+    if d >= 3 && !inCheck && ply > 0 && !wasNullMove && !analysisMode && hasNonPawnMaterial(pos, pos.sideToMove) then
       val nd = d - 1 - NullMoveR
       pos.makeNullMove()
       val nullScore = -negamax(pos, if nd < 0 then 0 else nd, -beta, -beta + 1, ply + 1, wasNullMove = true)
@@ -141,7 +180,7 @@ final class SearchV4 extends MultiPvSearch:
           if legal == 1 then
             -negamax(pos, d - 1, -beta, -alpha, ply + 1)
           else
-            if d >= 3 && legal >= 4 && isQuiet && !inCheck then
+            if d >= 3 && legal >= 4 && isQuiet && !inCheck && !analysisMode then
               val rRaw = Math.max(1, (Math.log(d.toDouble) * Math.log(legal.toDouble) / 2.0).toInt)
               val r    = if rRaw > d - 2 then d - 2 else rRaw
               val reduced = -negamax(pos, d - 1 - r, -alpha - 1, -alpha, ply + 1)
@@ -167,7 +206,7 @@ final class SearchV4 extends MultiPvSearch:
               val qm = quietsBuf(ply)(q)
               bumpHistory(stm, Move.from(qm).toInt, Move.to(qm).toInt, -d)
               q += 1
-          storeT(idx, pos.hash, mv, sc, d, LOWER)
+          storeT(idx, pos.hash, mv, sc, d, LOWER, ply)
           return alpha
         if isQuiet then
           quietsBuf(ply)(nQuiet) = mv; nQuiet += 1
@@ -176,7 +215,7 @@ final class SearchV4 extends MultiPvSearch:
     if legal == 0 then
       return if inCheck then -(MATE - ply) else 0
 
-    storeT(idx, pos.hash, bestMv, best, d, if best > aIn then EXACT else UPPER)
+    storeT(idx, pos.hash, bestMv, best, d, if best > aIn then EXACT else UPPER, ply)
     best
 
   private def quiesce(pos: Position, aIn: Int, beta: Int, ply: Int): Int =
@@ -200,6 +239,7 @@ final class SearchV4 extends MultiPvSearch:
     alpha
 
   def bestMoveAtDepth(pos: Position, targetDepth: Int, excl: Array[Int]): (Int, Int) =
+    analysisMode = true
     excluded  = excl
     deadline  = Long.MaxValue
     nodes     = 0
@@ -324,7 +364,16 @@ final class SearchV4 extends MultiPvSearch:
       val ts = sc(i);  sc(i) = sc(best);   sc(best) = ts
     mvs(i)
 
-  private inline def storeT(idx: Int, hash: Long, mv: Int, sc: Int, depth: Int, flag: Int): Unit =
-    val d = (mv & 0xFFFF).toLong | ((sc.toLong + 500000L) << 16) |
-            (flag.toLong << 36) | (depth.toLong << 38)
-    ttData(idx) = d; ttKeys(idx) = hash ^ d
+  // Depth-preferred replacement: keep a deeper entry for a *different* position
+  // (it cost more to compute and survives index collisions); always refresh the
+  // same position or an empty slot. Each search owns a fresh TT, so no aging is
+  // needed across moves. Mate scores are ply-adjusted via toTT before packing.
+  private inline def storeT(idx: Int, hash: Long, mv: Int, sc: Int, depth: Int, flag: Int, ply: Int): Unit =
+    val curData  = ttData(idx)
+    val occupied = !(ttKeys(idx) == 0L && curData == 0L)
+    val samePos  = ttKeys(idx) == (hash ^ curData)
+    val curDepth = ((curData >> 38) & 63).toInt
+    if !occupied || samePos || depth >= curDepth then
+      val d = (mv & 0xFFFF).toLong | ((toTT(sc, ply).toLong + 500000L) << 16) |
+              (flag.toLong << 36) | (depth.toLong << 38)
+      ttData(idx) = d; ttKeys(idx) = hash ^ d

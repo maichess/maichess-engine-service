@@ -90,6 +90,14 @@ object EvalV2:
 
   private val DoubledPenalty   = 20
   private val IsolatedPenalty  = 15
+  private val BishopPairBonus  = 30
+  private val Tempo            = 10
+  private val KnightOutpostBonus = 22
+  private val BishopOutpostBonus = 14
+  // Penalty for an own non-pawn piece attacked by an enemy pawn, indexed by PType
+  // (Pawn, Knight, Bishop, Rook, Queen, King). A pawn forking a queen or rook is a
+  // serious threat / tempo loss; minors less so; pawn/king entries unused.
+  private val PawnThreatPenalty = Array(0, 20, 20, 35, 50, 0)
   private val OpenFileRookBonus     = 20
   private val SemiOpenFileRookBonus = 10
   private val RookOn7thBonus        = 25
@@ -102,6 +110,11 @@ object EvalV2:
   // color's perspective. If `pawns(opp) & passedMask(c)(sq) == 0` then the pawn
   // on sq is passed.
   private val passedMask: Array[Array[Long]] = Array.ofDim(2, 64)
+
+  // pawnSpanMask(color)(sq): the *adjacent* files (f-1, f+1) strictly ahead of sq
+  // from color's perspective. If `enemyPawns & pawnSpanMask(c)(sq) == 0` no enemy
+  // pawn can ever advance to attack sq — the safety condition for an outpost.
+  private val pawnSpanMask: Array[Array[Long]] = Array.ofDim(2, 64)
 
   // fileMask(f) — eight bits for file f
   private val fileMask: Array[Long] = new Array(8)
@@ -140,6 +153,10 @@ object EvalV2:
         rb -= 1
       passedMask(Col.White)(sq) = mw
       passedMask(Col.Black)(sq) = mb
+      // Same spans but adjacent files only (exclude the piece's own file).
+      val ownFile = fileMask(file)
+      pawnSpanMask(Col.White)(sq) = mw & ~ownFile
+      pawnSpanMask(Col.Black)(sq) = mb & ~ownFile
       sq += 1
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -162,10 +179,10 @@ object EvalV2:
           mat   += s * (Mat(pt) + Pst(pt)(idx))
           phase += Ph(pt)
           if pt == PType.Knight then
-            val cnt = BB.popcount(Attacks.knightAttacks(sq))
+            val cnt = BB.popcount(Attacks.knightAttacks(sq) & ~own)
             mobOp += s * cnt; mobEg += s * cnt
           else if pt == PType.Bishop then
-            val cnt = BB.popcount(Magics.bishopAttacks(sq, occ))
+            val cnt = BB.popcount(Magics.bishopAttacks(sq, occ) & ~own)
             mobOp += s * cnt; mobEg += s * cnt
           else if pt == PType.Rook then
             val cnt = BB.popcount(Magics.rookAttacks(sq, occ) & ~own)
@@ -194,9 +211,80 @@ object EvalV2:
     // ── King safety ───────────────────────────────────────────────────────
     val kingSafety = kingSafetyScore(pos, wPawns, bPawns, occ, p)
 
+    // ── Bishop pair ───────────────────────────────────────────────────────
+    val bishopPair = bishopPairScore(pos)
+
+    // ── Outposts (knights/bishops on pawn-protected, pawn-safe squares) ─────
+    val outpost = outpostScore(pos, wPawns, bPawns, p)
+
+    // ── Threats: own pieces attacked by enemy pawns ────────────────────────
+    val threat = threatScore(pos)
+
     val mobile = (mobOp * p + mobEg * (24 - p)) / 24
 
-    mat + (opK * p + egK * (24 - p)) / 24 + mobile + pawnStruct + rookScore + kingSafety
+    // Tempo: a small bonus for having the move, always from the side-to-move's view.
+    mat + (opK * p + egK * (24 - p)) / 24 + mobile + pawnStruct + rookScore + kingSafety +
+      bishopPair + outpost + threat + Tempo
+
+  // Two or more bishops are worth a small bonus (open diagonals, complementary
+  // colour coverage). White-positive raw, then signed to the side to move.
+  private def bishopPairScore(pos: Position): Int =
+    var raw = 0
+    if BB.popcount(pos.pieceBB(Col.White, PType.Bishop)) >= 2 then raw += BishopPairBonus
+    if BB.popcount(pos.pieceBB(Col.Black, PType.Bishop)) >= 2 then raw -= BishopPairBonus
+    if pos.sideToMove == Col.White then raw else -raw
+
+  // ── Outposts ──────────────────────────────────────────────────────────────
+  // A knight or bishop on the opponent's half (relative ranks 4–6), defended by an
+  // own pawn and unreachable by any enemy pawn, is a durable strong square.
+  private def outpostScore(pos: Position, wPawns: Long, bPawns: Long, phase: Int): Int =
+    val raw = sideOutposts(pos, Col.White, wPawns, bPawns) -
+              sideOutposts(pos, Col.Black, bPawns, wPawns)
+    val tapered = raw * (phase + 8) / 24
+    if pos.sideToMove == Col.White then tapered else -tapered
+
+  private def sideOutposts(pos: Position, c: Int, ownPawns: Long, enemyPawns: Long): Int =
+    var raw = 0
+    var nb = pos.pieceBB(c, PType.Knight)
+    while BB.nonEmpty(nb) do
+      if isOutpost(c, BB.lsb(nb).toInt, ownPawns, enemyPawns) then raw += KnightOutpostBonus
+      nb = BB.clearLsb(nb)
+    var bb = pos.pieceBB(c, PType.Bishop)
+    while BB.nonEmpty(bb) do
+      if isOutpost(c, BB.lsb(bb).toInt, ownPawns, enemyPawns) then raw += BishopOutpostBonus
+      bb = BB.clearLsb(bb)
+    raw
+
+  private def isOutpost(c: Int, sq: Int, ownPawns: Long, enemyPawns: Long): Boolean =
+    val relRank = if c == Col.White then sq >> 3 else 7 - (sq >> 3)
+    if relRank < 3 || relRank > 5 then false
+    else
+      val defended = (ownPawns & Attacks.pawnAttacks(c ^ 1)(sq)) != 0L
+      val safe     = (enemyPawns & pawnSpanMask(c)(sq)) == 0L
+      defended && safe
+
+  // ── Threats: a non-pawn piece attacked by an enemy pawn ────────────────────
+  private def threatScore(pos: Position): Int =
+    val wpa = pawnAttacksBB(pos, Col.White)
+    val bpa = pawnAttacksBB(pos, Col.Black)
+    val raw = attackedValue(pos, Col.Black, wpa) - attackedValue(pos, Col.White, bpa)
+    if pos.sideToMove == Col.White then raw else -raw
+
+  private def attackedValue(pos: Position, c: Int, enemyPawnAttacks: Long): Int =
+    var sum = 0
+    var pt = PType.Knight
+    while pt <= PType.Queen do
+      sum += BB.popcount(pos.pieceBB(c, pt) & enemyPawnAttacks) * PawnThreatPenalty(pt)
+      pt += 1
+    sum
+
+  private def pawnAttacksBB(pos: Position, c: Int): Long =
+    var atk = 0L
+    var bb = pos.pieceBB(c, PType.Pawn)
+    while BB.nonEmpty(bb) do
+      atk |= Attacks.pawnAttacks(c)(BB.lsb(bb).toInt)
+      bb = BB.clearLsb(bb)
+    atk
 
   // ── Pawn structure: doubled, isolated, passed ─────────────────────────────
 

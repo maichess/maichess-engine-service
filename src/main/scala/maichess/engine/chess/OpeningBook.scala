@@ -1,7 +1,6 @@
 package maichess.engine.chess
 
 import java.nio.ByteBuffer
-import java.util.concurrent.ThreadLocalRandom
 
 // ── Polyglot opening book ─────────────────────────────────────────────────────
 // Reads a Polyglot `.bin` opening book from the classpath resource
@@ -53,12 +52,11 @@ object OpeningBook:
     val hi = range.toInt
     if lo < 0 then None
     else
-      val totalWeight = sumWeights(buf, lo, hi)
-      if totalWeight <= 0 then None
-      else
-        val pick = ThreadLocalRandom.current().nextInt(totalWeight)
-        val polyMove = pickMove(buf, lo, hi, pick)
-        decodeAndMatch(pos, polyMove)
+      // Strongest play: pick the single highest-weight book move deterministically
+      // (max strength / consistency) rather than sampling proportionally to weight.
+      val best = maxWeightIndex(buf, lo, hi)
+      if best < 0 then None
+      else decodeAndMatch(pos, buf.getShort(best * EntrySize + 8) & 0xFFFF)
 
   // Returns the matching [lo, hi) range packed into a Long: (lo << 32) | hi.
   // Returns (-1, -1) packed if not found. Avoids an allocation for the common
@@ -80,23 +78,18 @@ object OpeningBook:
         return (s.toLong << 32) | (e.toLong & 0xFFFFFFFFL)
     (-1L << 32) | (-1L & 0xFFFFFFFFL)
 
-  private def sumWeights(buf: ByteBuffer, lo: Int, hi: Int): Int =
-    var total = 0
-    var i = lo
-    while i < hi do
-      total += buf.getShort(i * EntrySize + 10) & 0xFFFF
-      i += 1
-    total
-
-  private def pickMove(buf: ByteBuffer, lo: Int, hi: Int, pickValue: Int): Int =
-    var remaining = pickValue
+  // Index of the highest-weight entry in [lo, hi); -1 if every weight is zero.
+  // Ties resolve to the first (lowest-index) entry, keeping selection deterministic.
+  private def maxWeightIndex(buf: ByteBuffer, lo: Int, hi: Int): Int =
+    var bestIdx = -1
+    var bestW   = 0
     var i = lo
     while i < hi do
       val w = buf.getShort(i * EntrySize + 10) & 0xFFFF
-      if remaining < w then return buf.getShort(i * EntrySize + 8) & 0xFFFF
-      remaining -= w
+      if w > bestW then
+        bestW = w; bestIdx = i
       i += 1
-    buf.getShort((hi - 1) * EntrySize + 8) & 0xFFFF
+    bestIdx
 
   private def decodeAndMatch(pos: Position, polyMove: Int): Option[String] =
     val promo = (polyMove >> 12) & 7
